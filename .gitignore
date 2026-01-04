@@ -1,3 +1,6 @@
+# api key (.env 파일 감춤)
+.env
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
