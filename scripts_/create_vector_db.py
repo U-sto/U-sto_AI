@@ -7,7 +7,10 @@ import io
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.messages import Document
+# 이유
 
+# - 반복 실행 X
+# - 1회성 벡터 생성 작업
 # ==========================================
 # 🔇 [화면 출력 인코딩 설정] (Windows 한글 깨짐 방지)
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')

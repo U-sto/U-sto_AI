@@ -2,7 +2,11 @@ import os
 import json
 import glob
 from openai import OpenAI
+# 이유
 
+# - 데이터 생성 파이프라인
+# - 서비스 런타임과 분리
+# ============================
 # 1. API 키 설정 (환경 변수 또는 직접 입력)
 # 실제 키를 입력하거나, 시스템 환경 변수에 설정되어 있어야 합니다.
 API_KEY = os.getenv("OPENAI_API_KEY")

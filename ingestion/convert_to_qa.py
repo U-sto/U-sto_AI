@@ -8,7 +8,11 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from dotenv import load_dotenv
 import os
+# =======
+# 이유
 
+# - 데이터 전처리 단계
+# - RAG ingestion 파이프라인의 일부
 # ==========================================
 # 🔇 [침묵 모드] 화면 출력 인코딩 강제 설정
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')

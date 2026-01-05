@@ -6,6 +6,11 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.messages import HumanMessage, SystemMessage
 from dotenv import load_dotenv
 import os
+# =====
+# 역할
+# - 유저 입력
+# - retriever 호출
+# - LLM 응답 출력
 # ==========================================
 # 🔇 [화면 출력 인코딩 설정]
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
