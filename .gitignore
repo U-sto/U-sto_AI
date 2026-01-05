@@ -1,11 +1,17 @@
 # api key (.env 파일 감춤)
 .env
 
-# vector db
+# # vector db
+# chroma_db/
+# *.bin
+# *.sqlite3
+# *.parquet
+
+# vector store
 chroma_db/
-*.bin
-*.sqlite3
-*.parquet
+
+# raw & generated data
+dataset/
 
 
 

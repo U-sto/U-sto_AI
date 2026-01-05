@@ -3,8 +3,9 @@ import os
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import Chroma
-from langchain.chains import RetrievalQA
 from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
 
 # 1. 파일 경로 설정 (정의부터 확실히!)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +54,8 @@ def get_qa_chain():
     # DB 로드
     vector_db = Chroma(persist_directory=persist_directory, embedding_function=embedding)
 
+    retriever = vector_db.as_retriever(search_kwargs={"k": 3})
+    
     # 똑똑한 GPT-4o 연결
     llm = ChatOpenAI(model_name="gpt-4o", temperature=0.1)
 
@@ -70,13 +73,14 @@ def get_qa_chain():
     """
     prompt = PromptTemplate.from_template(template)
 
-    # 체인 생성 (검색 + 답변)
-    chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=vector_db.as_retriever(search_kwargs={"k": 3}), # 관련 내용 3개 검색
-        chain_type_kwargs={"prompt": prompt},
-        return_source_documents=True # 출처 확인용
+    chain = (
+        {
+            "context": retriever,
+            "question": lambda x: x
+        }
+        | prompt
+        | llm
+        | StrOutputParser()
     )
     return chain
 
@@ -100,19 +104,17 @@ if query := st.chat_input("질문을 입력하세요..."):
             with st.spinner("매뉴얼을 찾아보는 중입니다... 📚"):
                 try:
                     # 답변 요청
-                    result = chain.invoke({"query": query})
-                    response_text = result['result']
-                    source_docs = result['source_documents']
+                    response_text = chain.invoke(query)
                     
-                    # 출처 정리 (중복 제거)
-                    sources = set([doc.metadata.get('source', '알 수 없음') for doc in source_docs])
+                    # # 출처 정리 (중복 제거)
+                    # sources = set([doc.metadata.get('source', '알 수 없음') for doc in source_docs])
                     
                     # 화면 출력
                     st.write(response_text)
                     
-                    # 출처 표시 (작게)
-                    if sources:
-                        st.caption(f"📚 참고 문서: {', '.join(sources)}")
+                    # # 출처 표시 (작게)
+                    # if sources:
+                    #     st.caption(f"📚 참고 문서: {', '.join(sources)}")
                     
                     # 기록 저장
                     st.session_state.messages.append({"role": "assistant", "content": response_text})

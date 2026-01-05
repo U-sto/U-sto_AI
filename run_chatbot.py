@@ -3,16 +3,18 @@ import sys
 import io
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain.schema import HumanMessage, SystemMessage
-
+from langchain_core.messages import HumanMessage, SystemMessage
+from dotenv import load_dotenv
+import os
 # ==========================================
 # 🔇 [화면 출력 인코딩 설정]
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
 # ==========================================
 
-# 🚨 [필수] API 키 입력 (본인 키로 변경!) -> 키 가져오기로 바꿨습니다.
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# # 🚨 [필수] API 키 입력 (본인 키로 변경!) -> 키 가져오기로 바꿨습니다.
+# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+load_dotenv()  # .env 파일을 os.environ에 로드 (정석 방법)
 # 벡터 DB 경로 (방금 만든 폴더 이름과 일치해야 함)
 DB_PATH = 'chroma_db'
 

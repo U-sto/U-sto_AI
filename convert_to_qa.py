@@ -5,7 +5,9 @@ import sys
 import io
 import re
 from langchain_openai import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
+from dotenv import load_dotenv
+import os
 
 # ==========================================
 # 🔇 [침묵 모드] 화면 출력 인코딩 강제 설정
@@ -17,8 +19,11 @@ sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
 os.environ["USERNAME"] = "User"
 os.environ["USER"] = "User"
 
-# 🔑 [필수] API 키 입력 (본인 키 확인!) -> 키 가져오기로 바꿨습니다.
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+# # 🔑 [필수] API 키 입력 (본인 키 확인!) -> 키 가져오기로 바꿨습니다.
+# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+### 위에 코드대로면 “.env는 있는데, load를 안 한 상태에서 None을 강제로 넣은 것”이라 불필요한 코드+실행안되는코드
+load_dotenv()  # .env 파일을 os.environ에 로드 (정석 방법)
+
 
 INPUT_FOLDER = 'dataset/input'
 OUTPUT_FOLDER = 'dataset/qa_output'

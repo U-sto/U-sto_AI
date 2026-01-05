@@ -6,7 +6,7 @@ import sys
 import io
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain.schema import Document
+from langchain_core.messages import Document
 
 # ==========================================
 # 🔇 [화면 출력 인코딩 설정] (Windows 한글 깨짐 방지)
