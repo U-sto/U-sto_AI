@@ -1,14 +1,14 @@
 from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타입
 from vectorstore.retriever import retrieve_docs  # 검색 함수
 from rag.prompt import build_prompt  # 프롬프트 생성
+from app.config import NO_CONTEXT_RESPONSE
 
 def run_rag_chain(llm, vectordb, user_query: str):
     # 문서 검색
     docs = retrieve_docs(vectordb, user_query)
 
-    # 검색 실패 처리
     if not docs:
-        return "관련 정보를 찾지 못했습니다."
+        return NO_CONTEXT_RESPONSE
 
     # 컨텍스트 결합
     context = "\n\n".join([doc.page_content for doc in docs])

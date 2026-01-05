@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI             # LLM
 from ingestion.embedder import get_embedding_model  # 임베딩
 from vectorstore.chroma_store import load_chroma_db # DB 로드
 from rag.chain import run_rag_chain                 # RAG 체인
+from app.config import VECTOR_DB_PATH, LLM_MODEL_NAME, LLM_TEMPERATURE
 
 # ==========================================
 # 🔇 Windows 한글 깨짐 방지용 출력 인코딩 설정
@@ -13,36 +14,33 @@ sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding="utf-8")
 sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding="utf-8")
 # ==========================================
 
-DB_PATH = "chroma_db"  # 벡터 DB 경로
-
 def main():
     load_dotenv()  # .env 로드
 
     print("🤖 챗봇 시스템 로딩 중... (DB 연결)")
 
     # DB 존재 여부 확인
-    if not os.path.exists(DB_PATH):
-        print(f"❌ 오류: '{DB_PATH}' 폴더가 없습니다.")
+    if not os.path.exists(VECTOR_DB_PATH):
+        print(f"❌ 오류: '{VECTOR_DB_PATH}' 폴더가 없습니다.")
         print("👉 create_vector_db.py를 먼저 실행하세요.")
         return
 
     # 임베딩 모델 로드
     embeddings = get_embedding_model()
 
+
     # 벡터 DB 로드
     try:
-        vectordb = load_chroma_db(embeddings, DB_PATH)
+        vectordb = load_chroma_db(embeddings, VECTOR_DB_PATH)
         print("✅ 지식 데이터베이스 연결 성공!")
     except Exception as e:
         print("❌ DB 연결 실패")
         return
 
-    # LLM 설정
     llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0.1
-    )
-
+    model=LLM_MODEL_NAME,
+    temperature=LLM_TEMPERATURE
+)
     print("=" * 50)
     print("🎓 대학 물품 관리 AI 챗봇이 준비되었습니다!")
     print("👉 질문을 입력하세요. ('종료' 입력 시 종료)")
