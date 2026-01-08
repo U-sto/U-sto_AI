@@ -7,9 +7,6 @@ from typing import List, Dict  # 타입 힌트용
 
 # Chunking 규칙 함수 정의 (여기서 규칙을 수정합니다)
 def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-    """
-    긴 텍스트를 chunk_size 길이로 자르되, 문맥 유지를 위해 overlap만큼 겹치게 자릅니다.
-    """
     if not text:
         return []
     
@@ -18,14 +15,22 @@ def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
     text_len = len(text)
     
     while start < text_len:
-        end = start + chunk_size
-        # 단순히 글자 수로 자르면 단어가 잘릴 수 있으므로 여유가 된다면 공백 기준으로 조정 가능
-        # 여기서는 심플하게 글자 수(chunk_size)로 자릅니다.
-        chunk = text[start:end]
-        chunks.append(chunk)
-        
-        # 다음 청크는 overlap만큼 겹쳐서 시작 (문맥 끊김 방지)
-        start += (chunk_size - overlap)
+        end = min(start + chunk_size, text_len)
+
+        if end < text_len and text[end] != " ":
+            last_space = text.rfind(" ", start, end)
+            if last_space != -1:
+                end = last_space
+
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        next_step = end - overlap
+        if next_step <= start: 
+            start = end
+        else:
+            start = next_step
         
     return chunks
 

@@ -3,6 +3,7 @@ import sys
 import json
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+from tqdm import tqdm  # [추가] 진행바 라이브러리
 
 # 1. 환경 변수 로드 (API 키 등)
 load_dotenv()
@@ -16,7 +17,6 @@ sys.path.append(root_dir)
 try:
     from ingestion.loader import load_json_files
     from ingestion.qa_converter import convert_to_qa
-    # 에러 났던 줄 삭제: from app.config import OPENAI_API_KEY 
 except ImportError as e:
     print(f"모듈 임포트 오류: {e}")
     print("팁: 터미널 위치가 프로젝트 최상위(AI_Project)인지 확인하세요.")
@@ -24,7 +24,6 @@ except ImportError as e:
 
 def main():
     # [설정] 경로 지정
-    # 작성자님의 폴더 구조에 맞춰 경로 설정
     INPUT_FOLDER = os.path.join(root_dir, 'dataset/input') 
     
     # 결과 저장 폴더
@@ -52,15 +51,23 @@ def main():
     generated_data = []
 
     # 3. 변환 작업
-    for idx, doc in enumerate(documents):
-        print(f"[{idx+1}/{len(documents)}] 변환 중: {doc.get('title', '제목 없음')}...")
-        
+    print(" AI가 문서를 읽고 질문을 생성 중입니다...")
+
+    for doc in tqdm(documents, desc="QA 변환 진행"):
         qa_pair = convert_to_qa(doc, llm)
         
-        if qa_pair:
-            generated_data.append(qa_pair)
-        else:
-            print("(내용이 너무 짧거나 변환 실패)")
+        # 강력한 데이터 검증 (Validation)
+        # qa_pair가 없거나, 필수 필드(질문, 답변)가 비어있으면 스킵
+        if not qa_pair:
+            # 변환 실패 (이미 converter 내부에서 처리됨)
+            continue
+            
+        if not qa_pair.get("question") or not qa_pair.get("answer"):
+            # tqdm을 쓸 때는 print 대신 tqdm.write를 써야 진행바가 안 깨집니다.
+            tqdm.write(f"[Skip] 불완전한 데이터 형식 제외됨: {doc.get('title', 'Untitled')}")
+            continue
+
+        generated_data.append(qa_pair)
 
     # 4. 저장
     output_file = os.path.join(OUTPUT_FOLDER, 'manual_qa_final.json')

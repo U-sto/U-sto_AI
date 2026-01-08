@@ -27,7 +27,6 @@ os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
 def main():
     # [설정] 경로 지정
-    # 현재 파일 위치 기준
     current_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(current_dir)
     
@@ -63,6 +62,13 @@ def main():
         print(f"JSON 파일 읽기 실패: {e}")
         sys.exit(1)
 
+    # 데이터가 리스트가 아니면 즉시 종료
+    if not isinstance(data, list):
+        print("❌ [Error] 데이터 형식이 잘못되었습니다.")
+        print(f" - 기대 형식: list (JSON Array)")
+        print(f" - 실제 형식: {type(data)}")
+        sys.exit(1)
+
     # 3. LangChain Document 객체로 변환
     documents = []
     
@@ -74,11 +80,10 @@ def main():
             
             # 둘 다 내용이 있을 때만 처리
             if q and a:
-                # [수정 포인트 1] 검색 내용 구성
-                # AI가 검색할 때 '카테고리'와 '제목'도 같이 보면 훨씬 정확해집니다.
+                # 검색 내용 구성
                 content = f"Category: {item.get('category', 'General')}\nTitle: {item.get('title', '')}\nQ: {q}\nA: {a}"
                 
-                # [수정 포인트 2] 메타데이터 연결 (우리가 만든 키 값과 일치시킴)
+                # 메타데이터 연결 (우리가 만든 키 값과 일치시킴)
                 metadata = {
                     "source": item.get("source", "Unknown"),
                     "title": item.get("title", ""),
@@ -91,24 +96,34 @@ def main():
     else:
         print("경고: JSON 데이터가 리스트 형식이 아닙니다.")
 
+    # 변환된 데이터가 하나도 없는 경우 처리
     if not documents:
         print("변환할 데이터가 없습니다.")
         sys.exit(1)
 
-    print(f"✅ 총 {len(documents)}개의 지식(QA)을 준비했습니다.")
+    print(f"총 {len(documents)}개의 지식(QA)을 준비했습니다.")
 
     # 4. 임베딩 및 DB 저장
     print("Embedding 모델을 준비 중입니다...")
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
+    # 임베딩 진행 상황 구체적 명시
+    print(f"Chroma DB 저장 시작... (총 {len(documents)}개 벡터 변환)")
+    print(f"저장 위치: {DB_PATH}")
+    print("(데이터 양에 따라 시간이 조금 걸릴 수 있습니다...)")
+
     print(f"Chroma DB에 저장 중... ({DB_PATH})")
     print("   (데이터 양에 따라 시간이 조금 걸릴 수 있습니다)")
     
-    vectorstore = Chroma.from_documents(
-        documents=documents,
-        embedding=embeddings,
-        persist_directory=DB_PATH
-    )
+    try:
+        vectorstore = Chroma.from_documents(
+            documents=documents,
+            embedding=embeddings,
+            persist_directory=DB_PATH
+        )
+    except Exception as e:
+        print(f"[Fatal Error] 임베딩 및 DB 저장 중 실패: {e}")
+        sys.exit(1)
 
     print("-" * 30)
     print("DB 생성 완료!")
