@@ -44,6 +44,16 @@ EMBEDDING_MODEL_NAME = "text-embedding-3-small"
 # 검색 시 가져올 문서 개수
 RETRIEVER_TOP_K = 3
 
+# ===============================
+# 🔁 Re-ranking (Cross-Encoder)
+# ===============================
+
+# Cross-Encoder 모델 이름
+CROSS_ENCODER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+# Re-ranking 이후 최종 context 개수
+RERANK_TOP_N = 8
+
 
 # ===============================
 # 🗣️ 프롬프트 관련 설정

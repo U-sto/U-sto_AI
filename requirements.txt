@@ -6,3 +6,4 @@ langchain-community
 chromadb
 openai
 tiktoken
+faiss-cpu
