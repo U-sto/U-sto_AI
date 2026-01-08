@@ -1,27 +1,20 @@
 from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타입
 from vectorstore.retriever import retrieve_docs  # 검색 함수
+
 from rag.prompt import build_prompt  # 프롬프트 생성
 from app.config import (
-    NO_CONTEXT_RESPONSE,
+    NO_CONTEXT_RESPONSE,LLM_TEMPERATURE, FAISS_SCORE_THRESHOLD, TOP_N_CONTEXT, Top_p, RETRIEVER_TOP_K
 )
-from vectorstore.cross_encoder import CrossEncoderReranker, get_reranker
 # ==============================
 # FAISS score 기반 RAG Chain
 # ==============================
-
-# FAISS distance threshold
-# 값이 작을수록 유사, threshold 초과 시 문서 폐기
-FAISS_SCORE_THRESHOLD = 10.0
-
-# LLM에 전달할 최대 문서 수
-TOP_N_CONTEXT = 6
 
 
 def run_rag_chain(
     llm,
     vectordb,
     user_query: str,
-    retriever_top_k: int = 60
+     retriever_top_k: int = RETRIEVER_TOP_K
 ):
 
     # 1️. Retrieval
@@ -87,15 +80,15 @@ def run_rag_chain(
     response = llm.invoke(
         [
             SystemMessage(content=
-                "당신은 대학교 행정 업무를 지원하는 전문 AI 어시스턴트입니다."
-                "반드시 근거가 있는 내용만 답변하십시오."
-                "불확실한 경우 모른다고 명시하십시오."
-                "존댓말(하십시오체)만 사용하십시오."
+                "당신은 대학교 행정 업무를 지원하는 전문 AI 어시스턴트입니다." 
+                "반드시 근거가 있는 내용만 답변하십시오." 
+                "불확실한 경우 모른다고 명시하십시오." 
+                "존댓말(하십시오체)만 사용하십시오." 
             ),
             HumanMessage(content=prompt)
         ],
-        top_p=0.9,        # 누적 확률 기반 샘플링
-        temperature=0.3  # 안정성 중심
+        top_p = Top_p,  # 다양성 조절
+        temperature=LLM_TEMPERATURE  # 응답 다양성 조절
     )
 
     # 9️⃣ 최종 응답 반환
@@ -105,5 +98,11 @@ def run_rag_chain(
     }
 
 
-# 1. Retrieval → Re-ranking → LLM 연결 로직
-# 2. Chunk Attribution 기능 구현
+"""
+RAG Chain 구성
+- Retrieval: Chroma VectorStore (내부 FAISS 검색)
+- Filtering: FAISS distance threshold 기반 문서 선별
+- Sorting: FAISS score 오름차순 정렬
+- Generation: LLM 응답 생성
+- Attribution: 사용된 문서 메타데이터 반환
+"""

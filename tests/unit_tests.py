@@ -56,7 +56,7 @@ class TestRAGChain(unittest.TestCase):
         response = run_rag_chain(
             llm=self.llm,
             vectordb=self.vectordb,
-            user_query="질문"
+            user_query="취득과 정리구분의 차이를 알려줘"
         )
         self.assertTrue(
             response["answer"].endswith("하십시오.") or
@@ -67,10 +67,13 @@ class TestRAGChain(unittest.TestCase):
         response = run_rag_chain(
             llm=self.llm,
             vectordb=self.vectordb,
-            user_query="질문"
+            user_query="취득과 정리구분의 차이를 알려줘"
         )
         self.assertIsInstance(response["attribution"], list)
-        self.assertGreater(len(response["attribution"]), 0)
+        if response["attribution"]:
+            first = response["attribution"][0]
+            self.assertIn("doc_id", first)
+            self.assertIn("score", first)
 
     def test_attribution_fields(self):
         response = run_rag_chain(

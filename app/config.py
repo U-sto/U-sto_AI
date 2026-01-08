@@ -42,7 +42,17 @@ EMBEDDING_MODEL_NAME = "text-embedding-3-small"
 # ===============================
 
 # 검색 시 가져올 문서 개수
-RETRIEVER_TOP_K = 3
+RETRIEVER_TOP_K = 30
+
+# FAISS distance threshold
+# 값이 작을수록 유사, threshold 초과 시 문서 폐기
+FAISS_SCORE_THRESHOLD = 10.0
+
+# LLM에 전달할 최대 문서 수
+TOP_N_CONTEXT = 6
+
+# 누적 확률 기반 샘플링
+Top_p = 0.9        
 
 # # ===============================
 # # 🔁 Re-ranking (Cross-Encoder)
