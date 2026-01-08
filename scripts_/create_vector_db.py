@@ -6,10 +6,7 @@ import sys
 import io
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain_core.documents import Document
-from dotenv import load_dotenv
-import os
-
+from langchain_core.documents import Document #messages -> documents로 수정
 # 이유
 
 # - 반복 실행 X
@@ -20,10 +17,8 @@ sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
 # ==========================================
 
-# os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-### 위에 코드대로면 “.env는 있는데, load를 안 한 상태에서 None을 강제로 넣은 것”이라 불필요한 코드+실행안되는코드
-load_dotenv()  # .env 파일을 os.environ에 로드 (정석 방법)
-
+# 🚨 [필수] API 키 입력 -> 키 가져오기로 바꿨습니다.
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 # 경로 설정
 INPUT_FOLDER = 'dataset/qa_output'
 DB_PATH = 'chroma_db'  # 벡터 DB가 저장될 폴더명
