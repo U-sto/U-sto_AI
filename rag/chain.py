@@ -3,23 +3,18 @@ from vectorstore.retriever import retrieve_docs  # 검색 함수
 
 from rag.prompt import build_prompt  # 프롬프트 생성
 from app.config import (
-    NO_CONTEXT_RESPONSE,LLM_TEMPERATURE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, Top_p, RETRIEVER_TOP_K
+    NO_CONTEXT_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K
 )
-# ==============================
-# FAISS score 기반 RAG Chain
-# ==============================
-
 
 def run_rag_chain(
     llm,
     vectordb,
     user_query: str,
-     retriever_top_k: int = RETRIEVER_TOP_K
+    retriever_top_k: int = RETRIEVER_TOP_K
 ):
 
     # 1️. Retrieval
     # Chroma VectorStore 사용
-    # 내부적으로 FAISS 인덱스가 검색 수행
     retrieved_docs = retrieve_docs(
         vectordb=vectordb,     # 벡터 DB
         query=user_query,      # 사용자 질문
@@ -48,7 +43,7 @@ def run_rag_chain(
             "attribution": []
         }
 
-    # 3️. FAISS score 기준 정렬
+    # 3️. 유사도 기반 score 기준 정렬
     # distance 기준이므로 오름차순 정렬
     filtered_docs.sort(key=lambda x: x[1])
 
@@ -76,7 +71,7 @@ def run_rag_chain(
         question=user_query
     )
 
-    # 7. LLM 호출 (top-p + top-k 상한 조합)
+    # 7. LLM 호출 (sampling 파라미터는 LLM 생성 시 설정됨)
     response = llm.invoke(
         [
             SystemMessage(content=
@@ -88,8 +83,6 @@ def run_rag_chain(
             ),
             HumanMessage(content=prompt)
         ],
-        # top_p=Top_p,  # 다양성 조절
-        # temperature=LLM_TEMPERATURE  # 응답 다양성 조절
     )
 
     # 8. 최종 응답 반환
@@ -101,9 +94,9 @@ def run_rag_chain(
 
 """
 RAG Chain 구성
-- Retrieval: Chroma VectorStore (내부 FAISS 검색)
+- Retrieval: Chroma VectorStore (HNSW 기반 벡터 인덱싱)
 - Filtering: 유사도 점수 threshold 기반 문서 선별
-- Sorting: FAISS score 오름차순 정렬
+- Sorting: 유사도 점수 score 오름차순 정렬
 - Generation: LLM 응답 생성
 - Attribution: 사용된 문서 메타데이터 반환
 """

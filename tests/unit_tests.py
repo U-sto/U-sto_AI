@@ -71,10 +71,12 @@ class TestRAGChain(unittest.TestCase):
         )
         self.assertIsInstance(response["attribution"], list)
         
-        if response["attribution"]:
-            first = response["attribution"][0]
-            self.assertIn("doc_id", first)
-            self.assertIn("score", first)
+        if not response["attribution"]:
+            self.skipTest("No attribution returned; skipping attribution field checks.")
+
+        first = response["attribution"][0]
+        self.assertIn("doc_id", first)
+        self.assertIn("score", first)
 
     def test_attribution_fields(self):
         response = run_rag_chain(

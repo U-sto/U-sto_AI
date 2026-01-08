@@ -1,4 +1,12 @@
 # # cross_encoder.py
+"""
+Placeholder module for CrossEncoder-based reranking.
+
+This project currently does not use CrossEncoder reranking.
+This file is intentionally kept to preserve the public import path
+`vectorstore.cross_encoder` for potential future extensions.
+"""
+
 
 # from sentence_transformers import CrossEncoder  # Cross-Encoder 로드
 
