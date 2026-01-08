@@ -3,7 +3,7 @@ from vectorstore.retriever import retrieve_docs  # 검색 함수
 
 from rag.prompt import build_prompt  # 프롬프트 생성
 from app.config import (
-    NO_CONTEXT_RESPONSE,LLM_TEMPERATURE, FAISS_SCORE_THRESHOLD, TOP_N_CONTEXT, Top_p, RETRIEVER_TOP_K
+    NO_CONTEXT_RESPONSE,LLM_TEMPERATURE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, Top_p, RETRIEVER_TOP_K
 )
 # ==============================
 # FAISS score 기반 RAG Chain
@@ -33,12 +33,12 @@ def run_rag_chain(
             "attribution": []
         }
 
-    # 2️. FAISS score 기반 필터링
+    # 2️. 유사도 점수 score 기반 필터링
     # threshold 이하 문서만 유지
     filtered_docs = [
         (doc, score)
         for doc, score in retrieved_docs
-        if score <= FAISS_SCORE_THRESHOLD
+        if score <= SIMILARITY_SCORE_THRESHOLD
     ]
 
     # threshold 통과 문서가 없는 경우 fallback
@@ -80,18 +80,19 @@ def run_rag_chain(
     response = llm.invoke(
         [
             SystemMessage(content=
+            (
                 "당신은 대학교 행정 업무를 지원하는 전문 AI 어시스턴트입니다." 
                 "반드시 근거가 있는 내용만 답변하십시오." 
                 "불확실한 경우 모른다고 명시하십시오." 
-                "존댓말(하십시오체)만 사용하십시오." 
+                "존댓말(하십시오체)만 사용하십시오." )
             ),
             HumanMessage(content=prompt)
         ],
-        top_p = Top_p,  # 다양성 조절
-        temperature=LLM_TEMPERATURE  # 응답 다양성 조절
+        # top_p=Top_p,  # 다양성 조절
+        # temperature=LLM_TEMPERATURE  # 응답 다양성 조절
     )
 
-    # 9️⃣ 최종 응답 반환
+    # 8. 최종 응답 반환
     return {
         "answer": response.content,
         "attribution": attribution
@@ -101,7 +102,7 @@ def run_rag_chain(
 """
 RAG Chain 구성
 - Retrieval: Chroma VectorStore (내부 FAISS 검색)
-- Filtering: FAISS distance threshold 기반 문서 선별
+- Filtering: 유사도 점수 threshold 기반 문서 선별
 - Sorting: FAISS score 오름차순 정렬
 - Generation: LLM 응답 생성
 - Attribution: 사용된 문서 메타데이터 반환

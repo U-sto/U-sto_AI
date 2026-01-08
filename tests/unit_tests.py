@@ -70,6 +70,7 @@ class TestRAGChain(unittest.TestCase):
             user_query="취득과 정리구분의 차이를 알려줘"
         )
         self.assertIsInstance(response["attribution"], list)
+        
         if response["attribution"]:
             first = response["attribution"][0]
             self.assertIn("doc_id", first)

@@ -6,9 +6,10 @@ from typing import List, Tuple
 
 def retrieve_docs(vectordb, query: str, top_k: int) -> List[Tuple]:
     """
-    Chroma VectorStore를 통해 유사 문서 검색 수행
-    내부적으로 FAISS 인덱스를 사용
-    """
+Chroma VectorStore를 통해 유사 문서 검색 수행
+내부적으로 ChromaDB의 HNSW 기반 벡터 인덱싱 사용
+"""
+
 
     # similarity_search_with_score
     # 반환값: [(Document, score), ...]
