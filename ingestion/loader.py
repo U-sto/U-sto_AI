@@ -7,9 +7,59 @@ from typing import List, Dict  # 타입 힌트용
 
 # Chunking 규칙 함수 정의 (여기서 규칙을 수정합니다)
 def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+    """
+    긴 텍스트를 일정 길이의 청크로 나누되, 단어 중간이 잘리지 않도록
+    뒤로 되짚어 보면서 자연스러운 분리 지점을 찾는 함수입니다.
     
-    # [Fix 1] 유효성 검사 추가 (Copilot 지적 사항)
-    # chunk_size가 overlap보다 커야 루프가 정상적으로 앞으로 나아갑니다.
+    각 청크는 `chunk_size`를 최대 길이로 하여 생성되며, 인접한 청크 간에는
+    `overlap` 길이만큼의 겹치는 구간을 유지해 앞/뒤 문맥이 이어지도록 합니다.
+    
+    Parameters
+    ----------
+    text : str
+        분할할 원본 텍스트입니다.
+    chunk_size : int, optional
+        생성하려는 청크의 목표 최대 길이(문자 수)입니다.
+        실제 청크 길이는 단어를 자르지 않기 위해 약간 더 짧아질 수 있습니다.
+        `overlap`보다 반드시 커야 하며, 그렇지 않으면 예외가 발생합니다.
+    overlap : int, optional
+        인접한 청크 사이에서 앞선 청크의 끝 부분을 얼마나 겹쳐서 포함할지에
+        대한 길이(문자 수)입니다. 이 값이 클수록 청크 간 문맥은 잘 유지되지만
+        전체 텍스트 길이에 비해 청크 개수가 많아질 수 있습니다.
+    
+    Chunking strategy
+    -----------------
+    1. 기본적으로 `start` 위치에서 `chunk_size`만큼 떨어진 `end` 지점을
+       후보 경계로 잡습니다.
+    2. 마지막 청크가 아니라면, `end` 지점에서 최대 `overlap` 길이만큼
+       뒤로 되짚어 보며 공백이나 마침표 등의 구두점을 찾습니다.
+       - 발견되면 그 지점을 새로운 `end`로 사용해 단어/문장 중간이
+         잘리지 않도록 합니다.
+       - 발견되지 않으면 원래 `end`를 사용해 정확히 `chunk_size` 주변에서
+         잘라냅니다.
+    
+    Infinite loop prevention
+    ------------------------
+    - 함수 시작 시 `chunk_size <= overlap`인 경우 즉시 `ValueError`를 발생시켜
+      루프가 앞으로 진행되지 못하는 설정을 사전에 차단합니다.
+    - 각 반복에서 다음 `start` 위치를 `end - overlap`으로 계산해
+      청크 간에 지정된 만큼의 겹치는 구간을 유지합니다.
+    - 만약 계산된 `next_step`이 현재 `start`와 같거나 더 앞이라면
+      (예: 청크가 너무 짧게 잘린 경우), 겹침을 포기하고 `start = end`로
+      이동시켜 최소한 한 번 이상 전진하도록 보장합니다.
+    - 추가적으로, 루프 말미에서 `start >= text_len`인 경우 반복을 종료해
+      예기치 못한 조건에서의 무한 루프를 방지합니다.
+    
+    Returns
+    -------
+    List[str]
+        분할된 텍스트 청크들의 리스트입니다. 각 요소는 공백이 앞뒤에서
+        제거된 문자열이며, 빈 문자열은 포함되지 않습니다.
+    """
+    
+    
+    # [Fix 1] 유효성 검사: chunk_size가 overlap보다 크지 않으면 루프 진행이 멈추거나 무한 루프가 발생할 수 있음
+    # (각 반복에서 start가 end-overlap으로 이동하므로, chunk_size <= overlap이면 start가 증가하지 않음)
     if chunk_size <= overlap:
         raise ValueError(f"chunk_size({chunk_size})는 overlap({overlap})보다 커야 합니다.")
     
@@ -23,14 +73,15 @@ def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
         # 마지막 부분이 아니라면, 단어가 잘리지 않게 뒤에서부터 공백/구두점 탐색
         if end < text_len:
             # end 지점에서부터 overlap 범위 내에서 가장 가까운 공백/마침표 찾기
-            # (너무 많이 뒤로 가면 안 되므로 최대 chunk_size의 30%까지만 뒤로 탐색)
-            look_back_limit = max(start + 1, end - int(chunk_size * 0.3))
             
-            found_split = False
+            # LOOKBACK_RATIO: 청크 크기의 최대 30%까지만 뒤로 되돌아가며 탐색 허용
+            # (이유: 너무 많이 뒤로 가면 청크 길이가 지나치게 짧아져 효율이 떨어짐)
+            LOOKBACK_RATIO = 0.3
+            look_back_limit = max(start + 1, end - int(chunk_size * LOOKBACK_RATIO))
+
             for i in range(end, look_back_limit, -1):
                 if text[i] in [' ', '\n', '.', '!', '?']:
                     end = i + 1  # 공백/구두점 다음에서 자름
-                    found_split = True
                     break
             
             # 적절한 분기점을 못 찾았다면 강제로 자름 (기본 end 유지)
@@ -52,11 +103,7 @@ def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
             start = end
         else:
             start = next_step
-        
-        # [Safety Check] 만약 어떤 이유로든 start가 이전과 같거나 줄어들면 강제 종료
-        if start >= text_len:
-            break
-        
+
     return chunks
 
 # 메인 로더 함수
@@ -87,9 +134,12 @@ def load_json_files(folder_path: str) -> List[Dict]:
                 # 위에서 만든 규칙대로 텍스트 자르기 (Chunking)
                 text_chunks = split_text(origin_text, chunk_size=500, overlap=50)
 
-                # 잘라진 조각들을 각각 별도의 문서로 저장
+                # 메타데이터만 따로 분리하여 복사 오버헤드를 줄이기
+                base_metadata = {k: v for k, v in item.items() if k != "content"}
+
+                # 잘려진 조각들을 각각 별도의 문서로 저장
                 for chunk in text_chunks:
-                    new_doc = item.copy()  # 원본 메타데이터 복사
+                    new_doc = base_metadata.copy()  # 원본 메타데이터 복사
                     new_doc["content"] = chunk # 본문을 잘라진 조각으로 교체
                     new_doc["source"] = file_name # 출처 기록
                     

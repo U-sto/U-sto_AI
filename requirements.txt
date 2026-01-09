@@ -7,3 +7,4 @@ chromadb
 openai
 tiktoken
 faiss-cpu
+tdqm

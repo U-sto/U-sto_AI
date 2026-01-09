@@ -1,3 +1,4 @@
+import traceback
 from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타입
 from vectorstore.retriever import retrieve_docs  # 검색 함수
 
@@ -91,7 +92,14 @@ def run_rag_chain(
             ]
         )
 
-    except Exception:
+    except Exception as e:
+        # 1. 에러가 났다는 사실과 내용을 출력 (터미널에서 확인 가능)
+        print(f"[ERROR] LLM Chain failed: {e}")
+    
+        # 2. 상세 에러 위치(몇 번째 줄인지) 출력
+        print(traceback.format_exc())
+
+        # 3. 프로그램이 죽지 않도록 안전한 기본값(Fallback) 반환
         return {
             "answer": NO_CONTEXT_RESPONSE,
             "attribution": []

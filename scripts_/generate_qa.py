@@ -34,7 +34,7 @@ def main():
 
     # 1. 데이터 로드
     if not os.path.exists(INPUT_FOLDER):
-        print(f"원본 데이터 폴더가 없습니다: {INPUT_FOLDER}")
+        print(f"원본 데이터 폴더가 존재하지 않습니다: {INPUT_FOLDER}")
         return
 
     documents = load_json_files(INPUT_FOLDER)
@@ -55,11 +55,10 @@ def main():
 
     for doc in tqdm(documents, desc="QA 변환 진행"):
         # [수정] 변수명 변경 (qa_pair -> qa_data)
-        # 단순 쌍(Pair)이 아니라 메타데이터가 포함된 전체 데이터(Data)임을 명시
         qa_data = convert_to_qa(doc, llm)
         
-        # 강력한 데이터 검증 (Validation)
-        # qa_pair가 없거나, 필수 필드(질문, 답변)가 비어있으면 스킵
+        # 기본적인 데이터 검증 (Validation)
+        # qa_data가 없거나, 필수 필드(질문, 답변)가 비어있으면 스킵
         if not qa_data:
             # 변환 실패 (이미 converter 내부에서 처리됨)
             continue
