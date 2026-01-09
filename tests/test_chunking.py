@@ -23,9 +23,9 @@ class TestTextSplitting(unittest.TestCase):
         self.assertGreaterEqual(len(chunks), 2)
         # 첫 번째 청크는 정확히 50글자여야 함
         self.assertEqual(chunks[0], "A" * 50)
-        # 모든 청크는 'A' 문자로만 구성되어야 함
+        # 모든 청크는 'A' 문자로만 구성되어야 하며, 청크 생성 과정에서 다른 문자가 섞이거나 빈 청크가 생기지 않았는지도 함께 검증한다.
         for chunk in chunks:
-            self.assertTrue(set(chunk) == {"A"})
+            self.assertEqual(set(chunk), {"A"})
         # 인접한 청크들 사이에 overlap(10글자)이 유지되는지 확인
         for i in range(len(chunks) - 1):
             self.assertEqual(chunks[i][-10:], chunks[i + 1][:10])
@@ -57,11 +57,18 @@ class TestTextSplitting(unittest.TestCase):
         """5. 자연스러운 문장 분리 (공백/마침표 기준) 테스트"""
         # 10글자에서 자르려는데, 9번째에 마침표가 있음
         text = "Hello World. This is a test."
-        # chunk_size=13, overlap=0
-        # "Hello World." (12자) -> 여기서 잘려야 함
+        
+        # chunk_size=13, overlap=5
+        # 예상: "Hello World." (12자)에서 잘려야 가장 자연스러움
         chunks = split_text(text, chunk_size=13, overlap=5)
         
-        self.assertIn("Hello World.", chunks[0])
+        # 단순히 포함 여부 뿐만이 아니라, 실제로 마침표에서 정확히 잘렸는지(Boundary) 검증을 강화함.
+        
+        # 첫 번째 청크가 정확히 "Hello World."여야 함 (뒤에 엄한 글자가 붙으면 안 됨)
+        # .strip()을 붙여 혹시 모를 끝 공백 이슈를 무시하고 내용만 비교
+        self.assertEqual(chunks[0].strip(), "Hello World.")
+
+        # 두 번째 청크 검증
         self.assertIn("This is", chunks[1])
 
 if __name__ == '__main__':

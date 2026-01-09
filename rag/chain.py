@@ -96,6 +96,9 @@ def run_rag_chain(
         # 1. 에러가 났다는 사실과 내용을 출력 (터미널에서 확인 가능)
         print(f"[ERROR] LLM Chain failed: {e}")
     
+        # 문제를 일으킨 질문 내용 로깅 (디버깅용)
+        print(f"[ERROR] Failed query: {user_query}")
+
         # 2. 상세 에러 위치(몇 번째 줄인지) 출력
         print(traceback.format_exc())
 

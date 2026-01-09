@@ -51,7 +51,8 @@ def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
     - 만약 계산된 `next_step`이 현재 `start`와 같거나 더 앞이라면
       (예: 청크가 너무 짧게 잘린 경우), 겹침을 포기하고 `start = end`로
       이동시켜 최소한 한 번 이상 전진하도록 보장합니다.
-    - 추가적으로, 루프 말미에서 `start >= text_len`인 경우 반복을 종료해
+    - 마지막으로, `while start < text_len:` 조건 자체가 `start`가
+      `text_len`에 도달하거나 이를 초과하면 루프를 종료하도록 보장해
       예기치 못한 조건에서의 무한 루프를 방지합니다.
     
     Returns
@@ -144,14 +145,16 @@ def load_json_files(folder_path: str) -> List[Dict]:
                 # 위에서 만든 규칙대로 텍스트 자르기 (Chunking)
                 text_chunks = split_text(origin_text, chunk_size=500, overlap=50)
 
-                # 메타데이터만 따로 분리하여 복사 오버헤드를 줄이기
-                base_metadata = {k: v for k, v in item.items() if k != "content"}
+                # 본문(content)을 제외한 나머지 메타데이터만 추출
+                document_metadata = {k: v for k, v in item.items() if k != "content"}
 
                 # 잘려진 조각들을 각각 별도의 문서로 저장
-                for chunk in text_chunks:
-                    new_doc = base_metadata.copy()  # 원본 메타데이터 복사
-                    new_doc["content"] = chunk # 본문을 잘라진 조각으로 교체
-                    new_doc["source"] = file_name # 출처 기록
+                # enumerate를 사용하여 chunk_index 생성 (기존 코드 버그 수정)
+                for i, chunk in enumerate(text_chunks):
+                    new_doc = document_metadata.copy()  # 원본 메타데이터 복사
+                    new_doc["content"] = chunk          # 본문을 잘라진 조각으로 교체
+                    new_doc["source"] = file_name       # 출처 기록
+                    new_doc["chunk_index"] = i          # 청크 순서 기록 (0, 1, 2...)
                     
                     documents.append(new_doc)      # 리스트에 추가
 

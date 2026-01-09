@@ -65,7 +65,7 @@ def main():
             
         if not qa_data.get("question") or not qa_data.get("answer"):
             # tqdm을 쓸 때는 print 대신 tqdm.write를 써야 진행바가 안 깨집니다.
-            tqdm.write(f"[Skip] 불완전한 데이터 형식 제외됨: {doc.get('title', 'Untitled')}")
+            tqdm.write(f"[Skip] 불완전한 데이터 형식 제외됨: {doc.get('title') or 'Untitled'}")
             continue
 
         generated_data.append(qa_data)

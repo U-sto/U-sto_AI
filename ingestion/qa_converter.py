@@ -138,7 +138,7 @@ def convert_to_qa(item: Dict, llm: ChatOpenAI) -> Dict:
         print(f" - 에러 메시지: {e}")
         print(f" - 문제 발생 문서: {item.get('title', '제목 없음')}") # 어떤 문서인지 알려줌
         print("Detailed Traceback:")
-        traceback.print_exc()
+        print(traceback.format_exc())
         return {}
 
     # 결과 검증 및 메타데이터(Metadata) 부착
