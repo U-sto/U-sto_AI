@@ -1,8 +1,10 @@
-import traceback
 from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타입
 from vectorstore.retriever import retrieve_docs  # 검색 함수
+
 from rag.prompt import build_prompt  # 프롬프트 생성
-from app.config import NO_CONTEXT_RESPONSE
+from app.config import (
+    NO_CONTEXT_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K
+)
 
 # RAG 시스템 페르소나 정의 (유지보수를 위해 상수로 분리)
 RAG_SYSTEM_PROMPT = """
@@ -15,34 +17,98 @@ RAG_SYSTEM_PROMPT = """
 3. 모르는 내용은 솔직히 모른다고 답변하세요.
 """
 
-def run_rag_chain(llm, vectordb, user_query: str):
-    # 문서 검색
-    docs = retrieve_docs(vectordb, user_query)
+def run_rag_chain(
+    llm,
+    vectordb,
+    user_query: str,
+    retriever_top_k: int = RETRIEVER_TOP_K
+):
 
-    if not isinstance(docs, list) or not docs:
-        print(f"[Debug] 검색된 문서가 없거나 타입이 잘못되었습니다. (Query는 로깅하지 않음)")
-        return NO_CONTEXT_RESPONSE
+    # 1️. Retrieval
+    # Chroma VectorStore 사용
+    retrieved_docs = retrieve_docs(
+        vectordb=vectordb,     # 벡터 DB
+        query=user_query,      # 사용자 질문
+        top_k=retriever_top_k  # 후보 문서 수
+    )
 
-    # 컨텍스트 결합
-    context = "\n\n".join([doc.page_content for doc in docs])
+    # 검색 실패 시 fallback
+    if not retrieved_docs:
+        return {
+            "answer": NO_CONTEXT_RESPONSE,
+            "attribution": []
+        }
 
-    # 프롬프트 생성
-    prompt_content = build_prompt(context, user_query)
+    # 2️. 유사도 점수 score 기반 필터링
+    # threshold 이하 문서만 유지
+    filtered_docs = [
+        (doc, score)
+        for doc, score in retrieved_docs
+        if score <= SIMILARITY_SCORE_THRESHOLD
+    ]
 
+    # threshold 통과 문서가 없는 경우 fallback
+    if not filtered_docs:
+        return {
+            "answer": NO_CONTEXT_RESPONSE,
+            "attribution": []
+        }
+    # 3️. 유사도 기반 score 기준 정렬
+    # distance 기준이므로 오름차순 정렬
+    filtered_docs.sort(key=lambda x: x[1])
+
+    # 상위 N개 문서 선택
+    top_docs = filtered_docs[:TOP_N_CONTEXT]
+
+    # 4. Context 구성
+    context = "\n\n".join([
+        doc.page_content  # 문서 본문
+        for doc, _ in top_docs
+    ])
+
+    # 5. Chunk Attribution 구성
+    attribution = [
+        {
+            "doc_id": doc.metadata.get("doc_id"),
+            "score": float(score)  # numpy 타입 제거
+        }
+        for doc, score in top_docs
+    ]
+
+    # 6. 프롬프트 생성
+    prompt = build_prompt(
+        context=context,
+        question=user_query
+    )
+    
+    # 7. LLM 호출 (sampling 파라미터는 LLM 생성 시 설정됨)
     # LLM 호출
     try:
-        response = llm.invoke([
-            SystemMessage(content=RAG_SYSTEM_PROMPT), # 상수로 정의된 시스템 프롬프트 사용
-            HumanMessage(content=prompt_content)
-        ])
-        return response.content
-
-    except Exception as e:
-        print(f"[오류] LLM 답변 생성 실패: {e}")
-        print("상세 에러 로그:")
-        print(traceback.format_exc())
-        # 에러 발생 시 사용자에게 보여줄 기본 메시지 반환
-        return (
-            "죄송합니다. 답변을 생성하는 도중 내부 오류가 발생했습니다.\n"
-            "잠시 후 다시 시도해 주시거나, 문제가 지속되면 관리자에게 문의해 주세요."
+        response = llm.invoke(
+            [
+                SystemMessage(content=RAG_SYSTEM_PROMPT),  # 시스템 프롬프트
+                HumanMessage(content=prompt)               # 유저 프롬프트
+            ]
         )
+
+    except Exception:
+        return {
+            "answer": NO_CONTEXT_RESPONSE,
+            "attribution": []
+        }
+
+    # 9. 최종 반환
+    return {
+        "answer": response.content,   # LLM 답변
+        "attribution": attribution    # 사용 문서
+    }
+
+
+"""
+RAG Chain 구성
+- Retrieval: Chroma VectorStore (HNSW 기반 벡터 인덱싱)
+- Filtering: 유사도 점수 threshold 기반 문서 선별
+- Sorting: 유사도 점수 score 오름차순 정렬
+- Generation: LLM 응답 생성
+- Attribution: 사용된 문서 메타데이터 반환
+"""

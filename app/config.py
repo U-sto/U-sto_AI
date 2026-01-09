@@ -42,7 +42,27 @@ EMBEDDING_MODEL_NAME = "text-embedding-3-small"
 # ===============================
 
 # 검색 시 가져올 문서 개수
-RETRIEVER_TOP_K = 3
+RETRIEVER_TOP_K = 30
+
+# 유사도/거리 점수 threshold
+# 값이 작을수록 더 유사하며, threshold 초과 문서는 폐기
+SIMILARITY_SCORE_THRESHOLD = 10.0
+
+# LLM에 전달할 최대 문서 수
+TOP_N_CONTEXT = 6
+
+# 누적 확률 기반 샘플링
+Top_p = 0.9        
+
+# # ===============================
+# # 🔁 Re-ranking (Cross-Encoder)
+# # ===============================
+
+# # Cross-Encoder 모델 이름
+# CROSS_ENCODER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+# # Re-ranking 이후 최종 context 개수
+# RERANK_TOP_N = 8
 
 
 # ===============================

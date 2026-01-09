@@ -59,12 +59,20 @@ def main():
 
         print("🤔 Thinking...", end="", flush=True)
 
-        # RAG 실행
-        answer = run_rag_chain(llm, vectordb, user_input)
+        # # RAG 실행 (기존 코드)
+        # answer = run_rag_chain(llm, vectordb, user_input)
+
+        # RAG 실행 (정확한 인자 순서)
+        answer = run_rag_chain(
+            llm=llm,
+            vectordb=vectordb,
+            user_query=user_input
+        )
+
 
         # 출력 정리
         print("\r🤖 AI 답변:")
-        print(answer)
+        print(answer["answer"])
         print("-" * 50)
 
 if __name__ == "__main__":
