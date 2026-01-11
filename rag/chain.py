@@ -3,7 +3,7 @@ from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타
 from vectorstore.retriever import retrieve_docs  # 검색 함수
 
 from rag.prompt import build_prompt  # 프롬프트 생성
-from rag.reranker import CrossEncoderReranker  # CrossEncoder 기반 재정렬기
+from rag.reranker import CrossEncoderReranker
 from app.config import (
     NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
     RERANKER_MODEL_NAME,
@@ -68,7 +68,10 @@ def run_rag_chain(
             print("[DEBUG] Retrieval 결과 (정렬 전):")
             for i, (doc, score) in enumerate(filtered_docs[:5]):
                 print(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score}")
-            
+    
+    # 기본값 None으로 명시
+    rerank_candidates = None
+
     # 정렬 먼저
     filtered_docs.sort(key=lambda x: x[1])  
 
