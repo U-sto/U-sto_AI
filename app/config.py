@@ -42,7 +42,7 @@ EMBEDDING_MODEL_NAME = "text-embedding-3-small"
 # ===============================
 
 # 검색 시 가져올 문서 개수
-RETRIEVER_TOP_K = 30
+RETRIEVER_TOP_K = 25
 
 # 유사도/거리 점수 threshold
 # 값이 작을수록 더 유사하며, threshold 초과 문서는 폐기
@@ -58,19 +58,30 @@ Top_p = 0.9
 # # 🔁 Re-ranking (Cross-Encoder)
 # # ===============================
 
-# # Cross-Encoder 모델 이름
-# CROSS_ENCODER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# Re-ranking 사용 여부
+USE_RERANKING = True
 
-# # Re-ranking 이후 최종 context 개수
-# RERANK_TOP_N = 8
+# Cross-Encoder 모델 이름
+RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+# Re-ranking 적용할 최대 후보 문서 수
+RERANK_CANDIDATE_K = 15
+
+# Re-ranking 이후 최종 Context 개수
+RERANK_TOP_N = 6
+
+# Re-ranking score 로그 출력 여부 (디버깅/평가용)
+RERANK_DEBUG = False
 
 
 # ===============================
 # 🗣️ 프롬프트 관련 설정
 # ===============================
 
-# (기존) 문서가 없을 때 메시지
-NO_CONTEXT_RESPONSE = "죄송합니다. 제공된 문서에서 관련 정보를 찾을 수 없습니다."
+# 참고 자료 없을 때 고정 응답
+NO_CONTEXT_RESPONSE = (
+    "죄송합니다, 매뉴얼에 해당 내용이 없어 답변드리기 어렵습니다."
+)
 
 # 시스템 오류(네트워크, API 등) 발생 시 나갈 메시지
 TECHNICAL_ERROR_RESPONSE = "시스템 오류가 발생하여 답변을 생성할 수 없습니다. 잠시 후 다시 시도해주세요."
