@@ -1,9 +1,10 @@
+import traceback
 from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타입
 from vectorstore.retriever import retrieve_docs  # 검색 함수
 
 from rag.prompt import build_prompt  # 프롬프트 생성
 from app.config import (
-    NO_CONTEXT_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K
+    NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K
 )
 
 # RAG 시스템 페르소나 정의 (유지보수를 위해 상수로 분리)
@@ -91,9 +92,25 @@ def run_rag_chain(
             ]
         )
 
+<<<<<<< HEAD
     except Exception:
         return {
             "answer": NO_CONTEXT_RESPONSE,
+=======
+    except Exception as e:
+        # 1. 에러가 났다는 사실과 내용을 출력 (터미널에서 확인 가능)
+        print(f"[ERROR] LLM Chain failed: {e}")
+    
+        # 문제를 일으킨 질문 내용 로깅 (디버깅용)
+        print(f"[ERROR] Failed query: {user_query}")
+
+        # 2. 상세 에러 위치(몇 번째 줄인지) 출력
+        print(traceback.format_exc())
+
+        # 3. 프로그램이 죽지 않도록 안전한 기본값(Fallback) 반환
+        return {
+            "answer": TECHNICAL_ERROR_RESPONSE,
+>>>>>>> 19924f53c76b726088b0ade872cc129877912f65
             "attribution": []
         }
 
