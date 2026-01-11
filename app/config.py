@@ -82,6 +82,23 @@ RERANK_DEBUG = False
 NO_CONTEXT_RESPONSE = (
     "죄송합니다, 매뉴얼에 해당 내용이 없어 답변드리기 어렵습니다."
 )
+# 프롬프트 버전 관리
+PROMPT_VERSION = "v1"
+
+# System Prompt 사용 여부
+ENABLE_SYSTEM_PROMPT = True
+
+# Safety Prompt 사용 여부
+ENABLE_SAFETY_PROMPT = True
+
+# Function Calling 판단 규칙 포함 여부
+ENABLE_FUNCTION_DECISION_PROMPT = True
+
+# Context 외 정보 차단 강도
+STRICT_GROUNDING = True
+
+# Context 없을 때 fallback 허용 여부
+ALLOW_FALLBACK_RESPONSE = True
 
 # 시스템 오류(네트워크, API 등) 발생 시 나갈 메시지
 TECHNICAL_ERROR_RESPONSE = "시스템 오류가 발생하여 답변을 생성할 수 없습니다. 잠시 후 다시 시도해주세요."

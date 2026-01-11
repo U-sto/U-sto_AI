@@ -27,7 +27,8 @@ def main():
     INPUT_FOLDER = os.path.join(root_dir, 'dataset/input') 
     
     # 결과 저장 폴더
-    OUTPUT_FOLDER = os.path.join(root_dir, 'dataset/qa_output')
+    OUTPUT_FOLDER = os.path.join(root_dir, ''
+    '/qa_output')
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
     print("QA 데이터 생성을 시작합니다...")
