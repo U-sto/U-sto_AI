@@ -2,7 +2,7 @@ import traceback
 from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타입
 from vectorstore.retriever import retrieve_docs  # 검색 함수
 
-from rag.prompt import build_prompt  # 프롬프트 생성
+from rag.prompt import assemble_prompt  # 프롬프트 생성
 from rag.reranker import CrossEncoderReranker
 from app.config import (
     NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
@@ -12,18 +12,6 @@ from app.config import (
     USE_RERANKING,
     RERANK_DEBUG
 )
-
-
-# RAG 시스템 페르소나 정의 (유지보수를 위해 상수로 분리)
-RAG_SYSTEM_PROMPT = """
-당신은 대학교 행정 업무를 지원하는 전문적인 AI 어시스턴트입니다.
-제공된 문맥(Context)을 바탕으로 사용자의 질문에 답변하세요.
-
-[답변 가이드라인]
-1. 답변 끝에 불필요한 이모지나 사족을 달지 마세요.
-2. 반드시 격식 있고 정중한 존댓말(하십시오체)을 사용하세요.
-3. 모르는 내용은 솔직히 모른다고 답변하세요.
-"""
 
 def run_rag_chain(
     llm,
@@ -122,7 +110,7 @@ def run_rag_chain(
 
 
     # 6. 프롬프트 생성
-    prompt = build_prompt(
+    prompt = assemble_prompt(
         context=context,
         question=user_query
     )
@@ -132,8 +120,7 @@ def run_rag_chain(
     try:
         response = llm.invoke(
             [
-                SystemMessage(content=RAG_SYSTEM_PROMPT),  # 시스템 프롬프트
-                HumanMessage(content=prompt)               # 유저 프롬프트
+                HumanMessage(content=prompt)               # 모든 규칙이 prompt에 포함됨
             ]
         )
 
