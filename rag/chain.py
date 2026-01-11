@@ -53,6 +53,13 @@ def run_rag_chain(
         for doc, retrieved_score in retrieved_docs
         if retrieved_score <= SIMILARITY_SCORE_THRESHOLD
     ]
+
+    # reranking 직전 (retrieval 결과 확인)
+    if USE_RERANKING and RERANK_DEBUG:
+        print("[DEBUG] Retrieval 결과 (정렬 전):")
+        for i, (doc, score) in enumerate(filtered_docs[:5]):
+            print(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score}")
+            
     # Re-ranking 대상 후보 수 제한
     rerank_candidates = filtered_docs[:RERANK_CANDIDATE_K]
 
@@ -63,20 +70,14 @@ def run_rag_chain(
             "answer": NO_CONTEXT_RESPONSE,
             "attribution": []
         }
+
+    
     # 3️. 유사도 기반 score 기준 정렬
     # distance 기준이므로 오름차순 정렬
     filtered_docs.sort(key=lambda x: x[1])
 
-    # reranking 직전 (retrieval 결과 확인)
-    if USE_RERANKING:
-        if RERANK_DEBUG:
-            print("[DEBUG] Retrieval 결과 (정렬 전):")
-            for i, (doc, score) in enumerate(filtered_docs[:5]):
-                print(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score}")
-
-    if USE_RERANKING:
-        if RERANK_DEBUG:
-            print("[DEBUG] Re-ranking 적용")
+    if USE_RERANKING and RERANK_DEBUG:
+        print("[DEBUG] Re-ranking 적용")
 
         # 3.5 Re-ranking
         reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
@@ -89,25 +90,21 @@ def run_rag_chain(
 
         top_docs = reranked_docs
     else:
-        # 상위 N개 문서 선택
-        top_docs = filtered_docs[:TOP_N_CONTEXT]
+         # score 버리고 Document만 유지
+        top_docs = [doc for doc, _ in filtered_docs[:TOP_N_CONTEXT]]
 
     # reranking 이후 (최종 선택 결과 확인)
 
     if RERANK_DEBUG:
-        print("[DEBUG] Re-ranking 전 doc_id:")
-        for i, (doc, _) in enumerate(rerank_candidates[:5]):
-            print(f"  [{i}] {doc.metadata.get('doc_id')}")
-
         print("[DEBUG] Re-ranking 후 doc_id:")
         for i, doc in enumerate(top_docs):
             print(f"  [{i}] {doc.metadata.get('doc_id')}")
 
 
     # 4. Context 구성
+    # re-ranking 이후에는 Document 리스트만 사용
     context = "\n\n".join([
-        doc.page_content  # 문서 본문
-        for doc in top_docs # doc,_ -> doc으로 수정하여 (Document,score)가 아닌 Document만 사용
+        doc.page_content for doc in top_docs 
     ])
 
     # 5. Chunk Attribution 구성
@@ -117,7 +114,6 @@ def run_rag_chain(
     }
     for doc in top_docs
 ]
-
 
     # 6. 프롬프트 생성
     prompt = build_prompt(

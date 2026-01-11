@@ -76,7 +76,7 @@ class TestRAGChain(unittest.TestCase):
 
         first = response["attribution"][0]
         self.assertIn("doc_id", first)
-        self.assertIn("score", first)
+
 
     def test_attribution_fields(self):
         response = run_rag_chain(
@@ -86,7 +86,21 @@ class TestRAGChain(unittest.TestCase):
         )
         first = response["attribution"][0]
         self.assertIn("doc_id", first)
-        self.assertIn("score", first)
+
+    def test_reranking_enabled_pipeline(self):
+        response = run_rag_chain(
+            llm=self.llm,
+            vectordb=self.vectordb,
+            user_query="취득과 정리구분의 차이를 알려줘"
+        )
+
+        # answer는 문자열이어야 함
+        self.assertIsInstance(response["answer"], str)
+
+        # attribution은 리스트여야 함
+        self.assertIsInstance(response["attribution"], list)
+
+
 
 if __name__ == "__main__":
     unittest.main()

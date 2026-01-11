@@ -1,12 +1,22 @@
 from sentence_transformers import CrossEncoder
 from app.config import RERANK_DEBUG, USE_RERANKING
 
+_reranker_instance = None
+
+def get_reranker(model_name: str):
+    global _reranker_instance
+    if _reranker_instance is None:
+        if RERANK_DEBUG:
+            print(f"[RERANKER] 모델 로딩: {model_name}")
+        _reranker_instance = CrossEncoder(model_name)
+    return _reranker_instance
+
 class CrossEncoderReranker:
     def __init__(self, model_name: str):
         if RERANK_DEBUG:
             print(f"[RERANKER] 모델 로딩: {model_name}")
 
-        self.model = CrossEncoder(model_name)
+        self.model = get_reranker(model_name)
 
         if RERANK_DEBUG:
             print("[RERANKER] 모델 로딩 완료")
@@ -28,7 +38,6 @@ class CrossEncoderReranker:
             key=lambda x: x[1],
             reverse=True
         )
-        if USE_RERANKING:
-            if RERANK_DEBUG:
-                print("[RERANKER] Re-ranking 완료")
+        if RERANK_DEBUG:
+            print("[RERANKER] Re-ranking 완료")
         return [doc for (doc, _), _ in reranked[:top_n]]
