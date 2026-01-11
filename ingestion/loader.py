@@ -156,6 +156,10 @@ def load_json_files(folder_path: str) -> List[Dict]:
                     new_doc["source"] = file_name       # 출처 기록
                     new_doc["chunk_index"] = i          # 청크 순서 기록 (0, 1, 2...)
                     
+                    # [피드백 반영] doc_id 추가
+                    # 형식: {파일명}{인덱스} (예: data.json0, data.json1)
+                    new_doc["doc_id"] = f"{file_name}{i}"
+
                     documents.append(new_doc)      # 리스트에 추가
 
     return documents  # 로드된 전체 문서 반환
