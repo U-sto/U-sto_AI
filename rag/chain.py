@@ -13,7 +13,9 @@ from app.config import (
     RERANK_DEBUG
 )
 
-import traceback
+import logging
+logger = logging.getLogger(__name__)
+
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import PromptTemplate  # [NEW] 프롬프트 템플릿 추가
 from langchain_core.output_parsers import StrOutputParser # [NEW] 문자열 파싱 추가
@@ -73,7 +75,8 @@ def run_rag_chain(
         # LLM에게 검색어 변환 요청
         refined_query = refine_chain.invoke({"question": user_query})
         
-        print(f"\n[Query Refinement] 원본: '{user_query}' -> 변환: '{refined_query}'") # 로그 확인용
+        # 로그 확인용 - logging 모듈 사용
+        logger.info(f"[Query Refinement] 원본: '{user_query}' -> 변환: '{refined_query}'")
 
         # ------------------------------------------------------------------
         # [STEP 1] Retrieval (검색)
