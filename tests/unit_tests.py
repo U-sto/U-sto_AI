@@ -33,6 +33,9 @@ class TestPromptAssembly(unittest.TestCase):
     def setUp(self):
         self.context = "샘플 참고 자료"
         self.question = "샘플 질문"
+        self._orig_system = config.ENABLE_SYSTEM_PROMPT
+        self._orig_safety = config.ENABLE_SAFETY_PROMPT
+        self._orig_func = config.ENABLE_FUNCTION_DECISION_PROMPT
     
     def test_system_prompt_enabled(self):
         config.ENABLE_SYSTEM_PROMPT = True
@@ -56,7 +59,6 @@ class TestPromptAssembly(unittest.TestCase):
     
     def test_function_decision_prompt_enabled(self):
         config.ENABLE_FUNCTION_DECISION_PROMPT = True
-
         prompt = assemble_prompt(
             context=self.context,
             question=self.question
@@ -73,14 +75,33 @@ class TestPromptAssembly(unittest.TestCase):
         )
 
         self.assertNotIn("[Function Calling 판단 기준]", prompt)
+    
+    def test_safety_prompt_enabled(self):
+        config.ENABLE_SAFETY_PROMPT = True
+
+        prompt = assemble_prompt(
+            context=self.context,
+            question=self.question
+        )
+
+        self.assertIn("[안전 지침]", prompt)
+
+
+    def test_safety_prompt_disabled(self):
+        config.ENABLE_SAFETY_PROMPT = False
+
+        prompt = assemble_prompt(
+            context=self.context,
+            question=self.question
+        )
+
+        self.assertNotIn("[안전 지침]", prompt)
+
 
     def tearDown(self):
-        config.ENABLE_SYSTEM_PROMPT = True
-        config.ENABLE_SAFETY_PROMPT = True
-        config.ENABLE_FUNCTION_DECISION_PROMPT = True
-
-
-    
+        config.ENABLE_SYSTEM_PROMPT = self._orig_system
+        config.ENABLE_SAFETY_PROMPT = self._orig_safety
+        config.ENABLE_FUNCTION_DECISION_PROMPT = self._orig_func
 
 class TestRAGChain(unittest.TestCase):
 
