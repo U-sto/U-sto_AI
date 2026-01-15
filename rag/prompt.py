@@ -133,6 +133,7 @@ def build_qa_generation_prompt():
     """)
 
 
+# chain.py에서 사용
 def build_query_refine_prompt():
     """
     [검색 최적화] 사용자의 자연어 질문을 DB 검색에 유리한 '공식 용어'로 변환하는 프롬프트
