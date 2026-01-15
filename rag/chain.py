@@ -1,24 +1,9 @@
 import traceback
-from langchain_core.messages import HumanMessage  # 메시지 클래스
-from vectorstore.retriever import retrieve_docs  # 검색 함수
-
-from rag.prompt import assemble_prompt  # 프롬프트 생성
-from rag.reranker import CrossEncoderReranker
-from app.config import (
-    NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
-    RERANKER_MODEL_NAME,
-    RERANK_CANDIDATE_K,
-    RERANK_TOP_N,
-    USE_RERANKING,
-    RERANK_DEBUG
-)
-
 import logging
-logger = logging.getLogger(__name__)
 
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.prompts import PromptTemplate  # [NEW] 프롬프트 템플릿 추가
-from langchain_core.output_parsers import StrOutputParser # [NEW] 문자열 파싱 추가
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 from vectorstore.retriever import retrieve_docs
 from rag.prompt import build_prompt
@@ -32,6 +17,9 @@ from app.config import (
     RERANK_DEBUG
 )
 
+# 로거 설정 (print 대신 사용)
+logger = logging.getLogger(__name__)
+
 # RAG 시스템 페르소나 정의
 RAG_SYSTEM_PROMPT = """
 당신은 대학교 행정 업무를 지원하는 전문적인 AI 어시스턴트입니다.
@@ -43,7 +31,7 @@ RAG_SYSTEM_PROMPT = """
 3. 모르는 내용은 솔직히 모른다고 답변하세요.
 """
 
-# [NEW] 질문 정제(Refinement)용 프롬프트 정의
+# 질문 정제(Refinement)용 프롬프트 정의
 QUERY_REFINE_PROMPT = """
 당신은 대학 행정 시스템 검색 전문가입니다.
 사용자의 질문을 시스템 매뉴얼(DB)에서 검색하기 가장 적합한 '공식 행정 용어'와 '키워드 중심'의 문장으로 변환하세요.
@@ -103,9 +91,9 @@ def run_rag_chain(
 
         # reranking 직전 디버깅
         if USE_RERANKING and RERANK_DEBUG:
-            print("[DEBUG] Retrieval 결과 (정렬 전):")
+            logger.debug("[DEBUG] Retrieval 결과 (정렬 전):")
             for i, (doc, score) in enumerate(filtered_docs[:5]):
-                print(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score:.4f}")
+                logger.debug(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score:.4f}")
         
         # 정렬 (Chroma는 score가 낮을수록 유사함 -> 오름차순 정렬)
         filtered_docs.sort(key=lambda x: x[1])  
@@ -118,7 +106,7 @@ def run_rag_chain(
         # Re-ranking
         if USE_RERANKING:
             if RERANK_DEBUG:
-                print("[DEBUG] Re-ranking 적용")
+                logger.debug("[DEBUG] Re-ranking 적용")
 
             reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
             
@@ -128,6 +116,13 @@ def run_rag_chain(
                 docs_with_scores=rerank_candidates,
                 top_n=RERANK_TOP_N
             )
+
+            # Re-ranking 후 결과 확인 로직 (logger 사용)
+            if RERANK_DEBUG:
+                logger.debug("[DEBUG] Re-ranking 후 최종 선택된 문서:")
+                for i, doc in enumerate(top_docs):
+                    logger.debug(f"  [{i}] {doc.metadata.get('title', 'No Title')} (ID: {doc.metadata.get('doc_id')})")
+
         else:
             # Reranking 안 쓰면 상위 N개만 선택
             top_docs = [doc for doc, _ in filtered_docs[:TOP_N_CONTEXT]]
@@ -163,9 +158,9 @@ def run_rag_chain(
         }
 
     except Exception as e:
-        print(f"[ERROR] LLM Chain failed: {e}")
-        print(f"[ERROR] Failed query: {user_query}")
-        print(traceback.format_exc())
+        logger.error(f"[ERROR] LLM Chain failed: {e}")
+        logger.error(f"[ERROR] Failed query: {user_query}")
+        logger.error(traceback.format_exc())
 
         return {
             "answer": TECHNICAL_ERROR_RESPONSE,
