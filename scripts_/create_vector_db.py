@@ -1,3 +1,5 @@
+# scripts_/create_vector_db.py
+
 import os
 import sys
 import io
@@ -70,22 +72,31 @@ def main():
     documents = []
     
     if isinstance(data, list):
-        for item in data:
+        # [Fix] enumerate를 추가하여 idx(순서 번호)를 생성합니다!
+        for idx, item in enumerate(data):
             # 질문(Q)과 답변(A) 가져오기
             q = item.get('question', '')
             a = item.get('answer', '')
             
             # 둘 다 내용이 있을 때만 처리
             if q and a:
-                # 검색 내용 구성
-                content = f"Category: {item.get('category', 'General')}\nTitle: {item.get('title', '')}\nQ: {q}\nA: {a}"
+                # 검색 내용 구성 - 한국어 문맥 강화 + 답변 비중 높이기
+                content = (
+                    f"문서 주제: {item.get('category', '일반')}\n"
+                    f"관련 메뉴: {item.get('title', '')}\n"
+                    f"사용자 질문: {q}\n"
+                    f"상세 답변: {a}"
+                )
                 
-                # 메타데이터 연결 (우리가 만든 키 값과 일치시킴)
+                # 메타데이터 연결
                 metadata = {
                     "source": item.get("source", "Unknown"),
                     "title": item.get("title", ""),
                     "chapter": item.get("chapter", ""),
-                    "category": item.get("category", "General")
+                    "category": item.get("category", "General"),
+                    # [핵심] 이제 idx가 존재하므로 여기서 에러가 나지 않습니다.
+                    # doc_id가 없으면 '파일명_번호' 형식으로 생성
+                    "doc_id": item.get("doc_id", f"{item.get('source', 'doc')}_{idx}")
                 }
                 
                 doc = Document(page_content=content, metadata=metadata)

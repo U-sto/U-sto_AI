@@ -8,3 +8,4 @@ openai
 tiktoken
 faiss-cpu
 tdqm
+sentence-transformers

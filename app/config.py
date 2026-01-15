@@ -62,13 +62,13 @@ Top_p = 0.9
 USE_RERANKING = True
 
 # Cross-Encoder 모델 이름
-RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
 
 # Re-ranking 적용할 최대 후보 문서 수
 RERANK_CANDIDATE_K = 15
 
 # Re-ranking 이후 최종 Context 개수
-RERANK_TOP_N = 6
+RERANK_TOP_N = 10
 
 # Re-ranking score 로그 출력 여부 (디버깅/평가용)
 RERANK_DEBUG = False
