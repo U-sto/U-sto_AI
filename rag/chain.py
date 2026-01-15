@@ -2,7 +2,7 @@ import traceback
 from langchain_core.messages import HumanMessage  # 메시지 클래스
 from vectorstore.retriever import retrieve_docs  # 검색 함수
 
-from rag.prompt import assemble_prompt  # 프롬프트 생성
+from rag.prompt import assemble_prompt, build_query_refine_prompt  # 프롬프트 생성
 from rag.reranker import CrossEncoderReranker
 from app.config import (
     NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
@@ -12,6 +12,8 @@ from app.config import (
     USE_RERANKING,
     RERANK_DEBUG
 )
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 def run_rag_chain(
     llm,
@@ -19,6 +21,28 @@ def run_rag_chain(
     user_query: str,
     retriever_top_k: int = RETRIEVER_TOP_K
 ):
+    # 질문 정제 로직
+    try:
+        refine_template = build_query_refine_prompt()
+        refine_prompt = PromptTemplate.from_template(refine_template)
+        refine_chain = refine_prompt | llm | StrOutputParser()
+        
+        # LLM을 통해 질문 변환
+        refined_query = refine_chain.invoke({"question": user_query})
+        
+        # 로그 출력 (디버깅용)
+        print(f"============== Query Refinement ==============")
+        print(f" Original: {user_query}")
+        print(f" Refined : {refined_query}")
+        print(f"==============================================")
+        
+        # ★ 핵심: 기존 변수(user_query)를 덮어씀 ★
+        # 이렇게 하면 아래에 있는 기존 코드들(retrieve_docs, reranker 등)은 
+        # 수정하지 않아도 자동으로 변환된 질문을 사용하게 됩니다.
+        user_query = refined_query
+        
+    except Exception as e:
+        print(f"[Warning] 질문 정제 실패 (원본 질문 사용): {e}")
 
     # 1️. Retrieval
     # Chroma VectorStore 사용
