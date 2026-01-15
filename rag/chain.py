@@ -5,6 +5,7 @@ from langchain_core.messages import HumanMessage
 
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from vectorstore.retriever import retrieve_docs
 from rag.prompt import assemble_prompt, build_question_classifier_prompt, build_query_refine_prompt
@@ -20,20 +21,6 @@ from app.config import (
 
 # 로거 설정 (print 대신 사용)
 logger = logging.getLogger(__name__)
-
-# 질문 정제(Refinement)용 프롬프트 정의
-QUERY_REFINE_PROMPT = """
-당신은 대학 행정 시스템 검색 전문가입니다.
-사용자의 질문을 시스템 매뉴얼(DB)에서 검색하기 가장 적합한 '공식 행정 용어'와 '키워드 중심'의 문장으로 변환하세요.
-답변에는 변환된 질문만 딱 한 문장으로 출력하세요. (설명 금지)
-
-[변환 예시]
-- 사용자: "장비 갖다 버리는 법" -> "물품 불용 신청 및 처분 절차"
-- 사용자: "이거 등록하고 저장하면 끝이야?" -> "물품 취득 등록 후 승인 요청 절차"
-- 사용자: "AI 예측 믿을만 해?" -> "사용주기 AI 예측 정확도 및 신뢰성"
-
-사용자 질문: {question}
-변환된 질문:"""
 
 def run_rag_chain(
     llm,

@@ -138,6 +138,14 @@ def assemble_prompt(context: str, question: str) -> str:
 
 
 # qa_convert.py에서 사용
+def build_dataset_creation_system_prompt() -> str:
+    """
+    [데이터셋 생성] QA 변환 시 AI에게 부여할 역할(System Message) 정의
+    """
+    return "너는 데이터셋 생성을 돕는 AI야. 반드시 유효한 JSON만 출력해."
+
+
+# qa_convert.py에서 사용
 def build_qa_generation_prompt():
     """
     [데이터 생성용] 매뉴얼 내용을 바탕으로 QA 쌍을 생성하는 프롬프트
@@ -160,31 +168,3 @@ def build_qa_generation_prompt():
     [내용]:
     {context}
     """)
-
-
-# qa_convert.py에서 사용
-def build_dataset_creation_system_prompt() -> str:
-    """
-    [데이터셋 생성] QA 변환 시 AI에게 부여할 역할(System Message) 정의
-    """
-    return "너는 데이터셋 생성을 돕는 AI야. 반드시 유효한 JSON만 출력해."
-
-
-# chain.py에서 사용
-def build_query_refine_prompt():
-    """
-    [검색 최적화] 사용자의 자연어 질문을 DB 검색에 유리한 '공식 용어'로 변환하는 프롬프트
-    """
-    return textwrap.dedent("""
-    당신은 대학 행정 시스템 검색 전문가입니다.
-    사용자의 질문을 시스템 매뉴얼(DB)에서 검색하기 가장 적합한 '공식 행정 용어'와 '키워드 중심'의 문장으로 변환하세요.
-    답변에는 변환된 질문만 딱 한 문장으로 출력하세요. (설명 금지)
-
-    [변환 예시]
-    - 사용자: "장비 갖다 버리는 법" -> "물품 불용 신청 및 처분 절차"
-    - 사용자: "이거 등록하고 저장하면 끝이야?" -> "물품 취득 등록 후 승인 요청 절차"
-    - 사용자: "AI 예측 믿을만 해?" -> "사용주기 AI 예측 정확도 및 신뢰성"
-
-    사용자 질문: {question}
-    변환된 질문:
-    """).strip()
