@@ -101,9 +101,6 @@ class TestPromptAssembly(unittest.TestCase):
         config.ENABLE_SAFETY_PROMPT = True
         config.ENABLE_FUNCTION_DECISION_PROMPT = True
 
-
-    
-
 class TestRAGChain(unittest.TestCase):
 
     @classmethod
