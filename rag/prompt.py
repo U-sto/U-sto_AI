@@ -107,6 +107,6 @@ def assemble_prompt(context: str, question: str) -> str:
 
     sections.append(f"[참고 자료]\n{context}")
     sections.append(f"[질문]\n{question}")
-
+    
     return "\n\n".join(sections)
     
