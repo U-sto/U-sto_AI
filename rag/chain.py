@@ -43,13 +43,13 @@ def run_rag_chain(
 ):
     # 0. 질문 분류 (LLM-first 판단)
     classifier_prompt = PromptTemplate.from_template(
-    build_question_classifier_prompt()
+        build_question_classifier_prompt()
 )
     classifier_chain = classifier_prompt | llm | StrOutputParser()
 
     classification = classifier_chain.invoke({"question": user_query}) # 사용자 질문 전달
 
-    use_rag = classification.strip() == "NEED_RAG" # RAG 필요 여부 판단
+    use_rag = "NEED_RAG" in classification.upper() # RAG 필요 여부 판단
     
     logger.info(f"[Question Classification] {classification}")
 
@@ -72,7 +72,7 @@ def run_rag_chain(
     try:
         # 질문 정제
         refine_prompt = PromptTemplate.from_template(
-        build_query_refine_prompt()
+            build_query_refine_prompt()
         )
 
         refine_chain = refine_prompt | llm | StrOutputParser()
@@ -94,13 +94,9 @@ def run_rag_chain(
         if not retrieved_docs:
             context = ""
             attribution = []
-        else:
-            # 기존 filtering / reranking 로직
-            context = ...
-            attribution = ...
 
 
-        # 2️. 유사도 점수 score 기반 필터링
+        # 2. 유사도 점수 score 기반 필터링
         # threshold 이하 문서만 유지
         filtered_docs = [
             (doc, retrieved_score)
@@ -121,9 +117,6 @@ def run_rag_chain(
             for i, (doc, score) in enumerate(filtered_docs[:5]):
                 logger.debug(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score:.4f}")
         
-        # 기본값 None으로 명시
-        rerank_candidates = None
-
         # 정렬 (Chroma는 score가 낮을수록 유사함 -> 오름차순 정렬)
         filtered_docs.sort(key=lambda x: x[1])  
 
@@ -140,7 +133,7 @@ def run_rag_chain(
 
             reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
             
-            # 중요: Re-ranking도 '변환된 질문(refined_query)'과 문서를 비교해야 정확
+            # 중요: Re-ranking도 '변환된 질문(refined_query)'과 문서를 비교해야 정확합니다.
             top_docs = reranker.rerank(
                 query=refined_query,  # [CHANGED] user_query -> refined_query
                 docs_with_scores=rerank_candidates,
