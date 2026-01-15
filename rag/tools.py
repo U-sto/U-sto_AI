@@ -1,122 +1,124 @@
-import os
 import json
-import requests  # 실제 API 호출용 (없으면 pip install requests)
-from dotenv import load_dotenv
+from langchain_core.tools import tool
+from typing import Optional
 
-# 1. 환경 변수 로드 (.env 파일 읽기)
-load_dotenv()
+# [메타 데이터] 동의어 및 계층 구조 정의
+# 사용자의 구어체(Key)를 데이터베이스 표준 용어(Value 리스트)로 매핑
+KEYWORD_SYNONYMS = {
+    "pc": ["개인용컴퓨터", "데스크탑", "본체", "컴퓨터"],
+    "노트북": ["포터블컴퓨터", "랩탑", "맥북", "그램"],
+    "서버": ["네트워크서버", "GPU서버", "메인프레임"],
+    "모니터": ["디스플레이", "LCD", "LED"],
+    "소융대": ["소프트웨어융합대학"],
+    "공대": ["공과대학"]
+}
 
-# 환경 변수에서 주소 가져오기 (없으면 None)
-API_SERVER_URL = os.getenv("ASSET_API_SERVER_URL")
-DASHBOARD_BASE_URL = os.getenv("DASHBOARD_BASE_URL", "http://localhost:3000") # 기본값 설정
-
-# [Fallback용 Mock Data]
-# API 호출 실패 시 또는 개발용으로 사용
+# [가상 데이터베이스] (백엔드 API 대용)
 MOCK_ASSET_DB = [
     {
-        "id": "A-1001", "name": "맥북 프로 16인치", "status": "사용 중 (양호)",
-        "dept": "IT 개발팀", "date": "2023-01-15", "desc": "고성능 개발 장비"
+        "asset_id": "2023-0001",
+        "asset_name": "고성능 GPU 네트워크서버", # 사용자는 '서버'라고 검색함
+        "department": "소프트웨어융합대학",
+        "acquisition_date": "2023-03-15",
+        "current_status": "사용중",
+        "summary": "AI 연구용 GPU 서버 (H100). 305호 서버실 가동 중."
     },
     {
-        "id": "A-1002", "name": "팀장님 의자", "status": "수리 필요 (파손)",
-        "dept": "경영지원팀", "date": "2020-05-10", "desc": "허리 받침대 고장"
+        "asset_id": "2022-5042",
+        "asset_name": "행정용 포터블컴퓨터 (LG)", # 사용자는 '노트북'이라고 검색함
+        "department": "교무처",
+        "acquisition_date": "2022-01-20",
+        "current_status": "수리중",
+        "summary": "교무처 행정 업무용 노트북. 액정 파손으로 입고."
+    },
+    {
+        "asset_id": "A-1001", 
+        "asset_name": "개인용컴퓨터 (i9급)", # 사용자는 'PC'라고 검색함
+        "department": "IT 개발팀", 
+        "acquisition_date": "2023-01-15", 
+        "current_status": "사용 중", 
+        "summary": "신규 개발자 지급용 고사양 데스크탑."
     }
 ]
 
-
-# 1. 물품 기본 정보 조회 함수
-def get_asset_basic_info(asset_name: str = None, asset_id: str = None) -> str:
+# 물품 기본 정보 조회 (로직 강화됨)
+@tool
+def get_asset_basic_info(asset_name: Optional[str] = None, asset_id: Optional[str] = None) -> str:
     """
-    [기능] 물품명이나 ID로 자산을 검색하여 기본 정보를 반환합니다.
-    [로직] .env에 API 주소가 있으면 실제 호출, 없으면 Mock 데이터 사용
+    물품의 이름(동의어 포함)이나 고유번호를 통해 기본 정보를 조회합니다.
     """
-    print(f"\n[Tool 실행] get_asset_basic_info 호출됨 (Name={asset_name}, ID={asset_id})")
-
-    # [Option A] 실제 백엔드 API 호출 시도
-    if API_SERVER_URL:
-        try:
-            # 실제 API 스펙에 맞춰 수정 필요 (예시: GET /api/assets?name=...)
-            params = {}
-            if asset_name: params["name"] = asset_name
-            if asset_id: params["id"] = asset_id
-
-            # 타임아웃 3초 설정 (너무 오래 걸리면 Mock으로 넘기기 위해)
-            response = requests.get(f"{API_SERVER_URL}/api/assets", params=params, timeout=3)
-            
-            if response.status_code == 200:
-                data = response.json()
-                # 여기서 백엔드 응답을 AI가 좋아하는 포맷으로 변환해야 함
-                # (백엔드 응답 구조에 따라 수정 필요)
-                return json.dumps(data, ensure_ascii=False)
-            else:
-                print(f"[API Error] Status: {response.status_code}")
-
-        except Exception as e:
-            print(f"[API Connection Failed] {e}")
-            print(">> 백엔드 연결 실패, Mock 데이터를 대신 사용합니다.")
-
-    # [Option B] Fallback: Mock Data 사용 (API 실패/미설정 시)
-    found_item = None
-    for item in MOCK_ASSET_DB:
-        if asset_id and asset_id == item["id"]:
-            found_item = item
-            break
-        if asset_name and asset_name in item["name"]:
-            found_item = item
-            break
-            
-    if found_item:
-        result = {
-            "asset_name": found_item["name"],
-            "current_status": found_item["status"],
-            "department": found_item["dept"],
-            "acquisition_date": found_item["date"],
-            "summary_text": f"요청하신 '{found_item['name']}'은(는) 현재 {found_item['dept']}에서 관리 중이며, 상태는 '{found_item['status']}'입니다."
-        }
-        return json.dumps(result, ensure_ascii=False)
-
-    return json.dumps({"error": "해당하는 물품 정보를 찾을 수 없습니다."}, ensure_ascii=False)
-
-
-# 2. 메뉴/화면 이동 함수
-def navigate_to_page(page_type: str) -> str:
-    print(f"\n[Tool 실행] navigate_to_page 호출됨 (Page={page_type})")
     
-    # URL 경로 매핑
-    path_map = {
-        "ASSET_DETAIL": "/assets/detail",
-        "USAGE_PREDICTION": "/analysis/prediction",
-        "DISPOSAL_MANAGEMENT": "/assets/disposal"
-    }
-    
-    path = path_map.get(page_type, "/home")
-    # 환경변수(DASHBOARD_BASE_URL)와 경로 결합
-    full_url = f"{DASHBOARD_BASE_URL}{path}"
-    
-    result = {
-        "success": True,
-        "target_url": full_url,
-        "message": f"{page_type} 화면으로 이동합니다."
-    }
-    return json.dumps(result, ensure_ascii=False)
+    if not asset_name and not asset_id:
+        return json.dumps({"error": "검색할 물품명이나 번호를 입력해주세요."})
 
-
-# 3. 사용주기 예측 페이지 연결 함수
-def open_usage_prediction_page(keyword: str = "") -> str:
-    print(f"\n[Tool 실행] open_usage_prediction_page 호출됨 (Keyword={keyword})")
+    found_assets = []
     
-    path = "/analysis/prediction"
-    base_url = f"{DASHBOARD_BASE_URL}{path}"
+    # [검색어 확장 로직] 사용자의 단어를 DB 용어로 확장
+    search_keywords = []
+    if asset_name:
+        # 1. 원래 검색어 추가
+        search_keywords.append(asset_name)
+        # 2. 동의어 사전에 있으면 확장 검색어 추가
+        # 예: "PC" -> ["개인용컴퓨터", "데스크탑", ...]
+        clean_name = asset_name.lower().strip()
+        if clean_name in KEYWORD_SYNONYMS:
+            search_keywords.extend(KEYWORD_SYNONYMS[clean_name])
     
-    if keyword:
-        target_url = f"{base_url}?search={keyword}"
-        msg = f"'{keyword}'에 대한 수명 예측 분석 화면을 열어드립니다."
-    else:
-        target_url = base_url
-        msg = "수명 예측 분석 대시보드로 이동합니다."
+    # 가상 DB 검색
+    for asset in MOCK_ASSET_DB:
+        # ID 검색 (정확 일치)
+        if asset_id and asset_id == asset["asset_id"]:
+            found_assets.append(asset)
+            continue
         
-    result = {
-        "target_url": target_url,
-        "guide_msg": msg
+        # 이름 검색 (확장된 키워드 중 하나라도 포함되면 매칭)
+        # 예: asset_name="고성능 GPU 네트워크서버" vs keywords=["서버", "네트워크서버"...]
+        if search_keywords:
+            for kw in search_keywords:
+                if kw in asset["asset_name"]: # 부분 일치 확인
+                    found_assets.append(asset)
+                    break # 중복 추가 방지
+
+    if not found_assets:
+        # 못 찾았을 때 힌트 제공
+        return json.dumps({
+            "message": "검색 결과가 없습니다.",
+            "debug_note": f"검색 시도 키워드: {search_keywords}" 
+        }, ensure_ascii=False)
+
+    return json.dumps({
+        "count": len(found_assets),
+        "results": found_assets
+    }, ensure_ascii=False)
+
+
+# 메뉴/화면 이동
+@tool
+def navigate_to_page(page_type: str, target_id: Optional[str] = None) -> str:
+    """
+    사용자가 특정 기능 수행을 원할 때 해당 시스템 화면으로 안내합니다.
+    (상세정보, 수명예측, 불용관리 등)
+    """
+    base_url = "https://univ-asset-system.kr"
+    
+    url_map = {
+        "detail": f"/assets/view/{target_id}" if target_id else "/assets/list",
+        "prediction": "/analysis/prediction",
+        "disuse": "/assets/disuse/register",
+        "return": "/assets/return/register",
+        "disposal": "/assets/disposal/register",
+        "list": "/assets/list"
     }
-    return json.dumps(result, ensure_ascii=False)
+    
+    key = page_type.lower()
+    if "예측" in key or "prediction" in key: key = "prediction"
+    elif "상세" in key or "detail" in key: key = "detail"
+    elif "불용" in key or "disuse" in key: key = "disuse"
+    
+    final_url = base_url + url_map.get(key, "/assets/list")
+    
+    return json.dumps({
+        "action": "navigate",
+        "url": final_url,
+        "message": f"요청하신 {page_type} 화면으로 이동합니다."
+    }, ensure_ascii=False)
