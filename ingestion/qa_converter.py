@@ -4,7 +4,7 @@ import traceback
 from langchain_openai import ChatOpenAI 
 from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타입
 from typing import Dict  # 타입 힌트
-from rag.prompt import build_qa_generation_prompt
+from rag.prompt import build_qa_generation_prompt, build_dataset_creation_system_prompt
 
 # MIN_TRUNCATION_RATIO: 텍스트를 자를 때, 마침표(.)를 찾더라도
 # 전체 허용 길이의 최소 50% 이상은 유지하도록 보장하는 비율.
@@ -66,8 +66,11 @@ def convert_to_qa(item: Dict, llm: ChatOpenAI) -> Dict:
 
     # LLM 호출
     try:
+        # 하드코딩 된 문자열 대신 함수 호출로 변경
+        system_msg_content = build_dataset_creation_system_prompt()
+
         response = llm.invoke([
-            SystemMessage(content="너는 데이터셋 생성을 돕는 AI야. 반드시 유효한 JSON만 출력해."),
+            SystemMessage(content=system_msg_content),
             HumanMessage(content=final_prompt)
         ])
         

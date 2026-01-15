@@ -133,6 +133,14 @@ def build_qa_generation_prompt():
     """)
 
 
+# qa_convert.py에서 사용
+def build_dataset_creation_system_prompt() -> str:
+    """
+    [데이터셋 생성] QA 변환 시 AI에게 부여할 역할(System Message) 정의
+    """
+    return "너는 데이터셋 생성을 돕는 AI야. 반드시 유효한 JSON만 출력해."
+
+
 # chain.py에서 사용
 def build_query_refine_prompt():
     """
