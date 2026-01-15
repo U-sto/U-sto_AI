@@ -47,11 +47,28 @@ def run_rag_chain(
 )
     classifier_chain = classifier_prompt | llm | StrOutputParser()
 
-    classification = classifier_chain.invoke({"question": user_query})
+    classification = classifier_chain.invoke({"question": user_query}) # 사용자 질문 전달
 
-    use_rag = classification.strip() == "NEED_RAG"
+    use_rag = classification.strip() == "NEED_RAG" # RAG 필요 여부 판단
+    
+    logger.info(f"[Question Classification] {classification}")
 
+    # A. RAG 필요 없는 질문 → LLM 바로 응답
+    if not use_rag:
+        prompt = assemble_prompt(
+            context="",              # context 없이
+            question=user_query
+        )
 
+        response = llm.invoke(
+            [HumanMessage(content=prompt)]
+        )
+
+        return {
+            "answer": response.content,
+            "attribution": []        # RAG 미사용
+        }
+    # B. RAG 필요한 경우만 아래 로직 수행
     try:
         # 질문 정제
         refine_prompt = PromptTemplate.from_template(
