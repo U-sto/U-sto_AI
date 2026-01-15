@@ -1,6 +1,34 @@
 import textwrap
 import app.config as config
 
+def build_question_classifier_prompt():
+    """
+    질문 분류용 프롬프트 반환
+    """
+    return textwrap.dedent("""
+    다음 질문이
+    1) 사내 시스템 데이터(자산, 물품, 상태 조회)에 의존하는 질문인지
+    2) 일반적인 설명/절차/정책 질문인지 판단하세요.
+
+    출력은 반드시 아래 중 하나만:
+    - NEED_RAG
+    - NO_RAG
+
+    질문: {question}
+    판단:
+    """)
+
+def build_query_refine_prompt():
+    """
+    사용자 질문을 검색 최적화된 행정 용어 중심 질문으로 변환
+    """
+    return textwrap.dedent("""
+    당신은 대학 행정 시스템 검색 전문가입니다.
+    ...
+    사용자 질문: {question}
+    변환된 질문:
+    """)
+
 def build_system_prompt():
     """
     시스템 정체성, 권한, 한계를 정의하는 프롬프트 반환
@@ -10,7 +38,8 @@ def build_system_prompt():
     - 본 AI는 대학 물품 관리 시스템 전용 AI 챗봇이다.
 
     [권한]
-    - 제공된 Context(매뉴얼, 문서) 내 정보만 사용한다.
+    - 제공된 Context는 참고 자료로 활용한다.
+    - Context가 없는 경우에도 일반적인 절차, 정책, 설명은 가능하다.
 
     [한계]
     - Context에 없는 정보는 추측하지 않는다.

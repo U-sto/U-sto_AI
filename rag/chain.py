@@ -1,12 +1,13 @@
 import traceback
 import logging
 
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage
+
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from vectorstore.retriever import retrieve_docs
-from rag.prompt import build_prompt
+from rag.prompt import assemble_prompt, build_question_classifier_prompt, build_query_refine_prompt
 from rag.reranker import CrossEncoderReranker
 from app.config import (
     NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
@@ -19,17 +20,6 @@ from app.config import (
 
 # 로거 설정 (print 대신 사용)
 logger = logging.getLogger(__name__)
-
-# RAG 시스템 페르소나 정의
-RAG_SYSTEM_PROMPT = """
-당신은 대학교 행정 업무를 지원하는 전문적인 AI 어시스턴트입니다.
-제공된 문맥(Context)을 바탕으로 사용자의 질문에 답변하세요.
-
-[답변 가이드라인]
-1. 답변 끝에 불필요한 이모지나 사족을 달지 마세요.
-2. 반드시 격식 있고 정중한 존댓말(하십시오체)을 사용하세요.
-3. 모르는 내용은 솔직히 모른다고 답변하세요.
-"""
 
 # 질문 정제(Refinement)용 프롬프트 정의
 QUERY_REFINE_PROMPT = """
@@ -51,9 +41,23 @@ def run_rag_chain(
     user_query: str,
     retriever_top_k: int = RETRIEVER_TOP_K
 ):
+    # 0. 질문 분류 (LLM-first 판단)
+    classifier_prompt = PromptTemplate.from_template(
+    build_question_classifier_prompt()
+)
+    classifier_chain = classifier_prompt | llm | StrOutputParser()
+
+    classification = classifier_chain.invoke({"question": user_query})
+
+    use_rag = classification.strip() == "NEED_RAG"
+
+
     try:
         # 질문 정제
-        refine_prompt = PromptTemplate.from_template(QUERY_REFINE_PROMPT)
+        refine_prompt = PromptTemplate.from_template(
+        build_query_refine_prompt()
+        )
+
         refine_chain = refine_prompt | llm | StrOutputParser()
         
         # LLM에게 검색어 변환 요청
@@ -62,7 +66,7 @@ def run_rag_chain(
         # 로그 확인용 - logging 모듈 사용
         logger.info(f"[Query Refinement] 원본: '{user_query}' -> 변환: '{refined_query}'")
 
-        # Retrieval (검색)
+        # 1. Retrieval (검색)
         retrieved_docs = retrieve_docs(
             vectordb=vectordb,
             query=refined_query,   # [CHANGED] user_query -> refined_query
@@ -71,18 +75,23 @@ def run_rag_chain(
 
         # 검색 실패 시 fallback
         if not retrieved_docs:
-            return {
-                "answer": NO_CONTEXT_RESPONSE,
-                "attribution": []
-            }
+            context = ""
+            attribution = []
+        else:
+            # 기존 filtering / reranking 로직
+            context = ...
+            attribution = ...
 
-        # 유사도 점수 필터링
+
+        # 2️. 유사도 점수 score 기반 필터링
+        # threshold 이하 문서만 유지
         filtered_docs = [
             (doc, retrieved_score)
             for doc, retrieved_score in retrieved_docs
             if retrieved_score <= SIMILARITY_SCORE_THRESHOLD
         ]
 
+        # threshold 통과 문서가 없는 경우 fallback
         if not filtered_docs:
             return {
                 "answer": NO_CONTEXT_RESPONSE,
@@ -95,22 +104,26 @@ def run_rag_chain(
             for i, (doc, score) in enumerate(filtered_docs[:5]):
                 logger.debug(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score:.4f}")
         
+        # 기본값 None으로 명시
+        rerank_candidates = None
+
         # 정렬 (Chroma는 score가 낮을수록 유사함 -> 오름차순 정렬)
         filtered_docs.sort(key=lambda x: x[1])  
 
         # Re-ranking 대상 후보 수 제한
         rerank_candidates = filtered_docs
+
         if USE_RERANKING:
             rerank_candidates = filtered_docs[:RERANK_CANDIDATE_K]
-        
-        # Re-ranking
+
+        # 3. Re-ranking
         if USE_RERANKING:
             if RERANK_DEBUG:
                 logger.debug("[DEBUG] Re-ranking 적용")
 
             reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
             
-            # 중요: Re-ranking도 '변환된 질문(refined_query)'과 문서를 비교해야 정확합니다.
+            # 중요: Re-ranking도 '변환된 질문(refined_query)'과 문서를 비교해야 정확
             top_docs = reranker.rerank(
                 query=refined_query,  # [CHANGED] user_query -> refined_query
                 docs_with_scores=rerank_candidates,
@@ -127,27 +140,27 @@ def run_rag_chain(
             # Reranking 안 쓰면 상위 N개만 선택
             top_docs = [doc for doc, _ in filtered_docs[:TOP_N_CONTEXT]]
 
-        # Context 구성
+        # 4. Context 구성
+        # re-ranking 이후에는 Document 리스트만 사용
         context = "\n\n".join([
             doc.page_content for doc in top_docs 
         ])
 
-        # Chunk Attribution 구성
+        # 5. Chunk Attribution 구성
         attribution = [
             {"doc_id": doc.metadata.get("doc_id")}
             for doc in top_docs
         ]
 
-        # 프롬프트 생성
-        prompt = build_prompt(
+        # 6. 프롬프트 생성
+        prompt = assemble_prompt(
             context=context,
             question=user_query
         )
         
-        # LLM 답변 생성
+        # 7. LLM 답변 생성
         response = llm.invoke(
             [
-                SystemMessage(content=RAG_SYSTEM_PROMPT),
                 HumanMessage(content=prompt)
             ]
         )
