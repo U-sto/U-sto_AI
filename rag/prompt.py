@@ -1,10 +1,5 @@
 import textwrap
-
-from app.config import (
-    ENABLE_SYSTEM_PROMPT,
-    ENABLE_SAFETY_PROMPT,
-    ENABLE_FUNCTION_DECISION_PROMPT
-)
+import app.config as config
 
 def build_system_prompt():
     """
@@ -94,15 +89,17 @@ def assemble_prompt(context: str, question: str) -> str:
     """
     sections = []
 
-    if ENABLE_SYSTEM_PROMPT:
+    if config.ENABLE_SYSTEM_PROMPT:
         sections.append(build_system_prompt())
 
+    # 역할 및 응답 스타일은 시스템 전반에 항상 적용되어야 하는 필수 프롬프트이므로
+    # 다른 섹션과 달리 별도의 ENABLE_* 플래그 없이 항상 포함한다.
     sections.append(build_role_prompt())
 
-    if ENABLE_SAFETY_PROMPT:
+    if config.ENABLE_SAFETY_PROMPT:
         sections.append(build_safety_prompt())
 
-    if ENABLE_FUNCTION_DECISION_PROMPT:
+    if config.ENABLE_FUNCTION_DECISION_PROMPT:
         sections.append(build_function_decision_prompt())
 
     sections.append(f"[참고 자료]\n{context}")
