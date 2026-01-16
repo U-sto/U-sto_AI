@@ -169,4 +169,40 @@ def assemble_prompt(context: str, question: str) -> str:
     sections.append(f"[질문]\n{question}")
 
     return "\n\n".join(sections)
-    
+
+
+# qa_convert.py에서 사용
+def build_dataset_creation_system_prompt() -> str:
+    """
+    [데이터셋 생성] QA 변환 시 AI에게 부여할 역할(System Message) 정의
+    """
+    return "너는 데이터셋 생성을 돕는 AI야. 반드시 유효한 JSON만 출력해."
+
+
+# qa_convert.py에서 사용
+def build_qa_generation_prompt() -> str:
+    """
+    [데이터 생성용] 매뉴얼 내용을 바탕으로 QA 쌍을 생성하는 프롬프트 템플릿을 반환합니다.
+
+    Returns:
+        str: {context} 플레이스홀더를 포함한 프롬프트 문자열. 
+             사용 시 .format(context=...)을 통해 실제 내용을 주입해야 합니다.
+    """
+    return textwrap.dedent("""
+    아래 [내용]을 완벽하게 이해한 뒤, 사용자가 이 정보를 찾기 위해 물어볼 법한 질문(question)과 그에 대한 답변(answer)을 생성해.
+
+    [작성 규칙]
+    1. 질문은 "어떻게 해?", "뭐야?" 처럼 대화체로 작성하되, 핵심 키워드(예: 반납, 불용, 처분 등)를 반드시 포함할 것.
+    2. 답변은 매뉴얼 내용을 기반으로 상세하게 작성할 것.
+    3. 카테고리는 주제를 대표하는 단어 1개(규정, 절차, 시스템, 오류해결 등)로 추출할 것.
+
+    반드시 아래 JSON 형식으로만 출력해:
+    {{
+      "question": "생성된 질문",
+      "answer": "생성된 답변",
+      "category": "추출된 카테고리"
+    }}
+
+    [내용]:
+    {context}
+    """)
