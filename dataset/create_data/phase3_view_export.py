@@ -95,9 +95,9 @@ if total_assets_op == total_assets_inv:
 else:
     print("   ❌ FAIL: 수량이 불일치합니다.")
 
-# 검증 2: 날짜 논리 확인 (불용확정일자 > 취득일자)
+# 검증 2: 날짜 논리 확인 (취득일자 < 불용일자)
 # 불용 목록에서 샘플링하여 확인
-print("2. 날짜 논리 검증 (불용일자 > 취득일자)")
+print("2. 날짜 논리 검증 (취득일자 < 불용일자)")
 error_count = 0
 for _, row in df_du.iterrows():
     acq_d = pd.to_datetime(row['취득일자'])

@@ -119,7 +119,7 @@ for idx, row in df_operation.iterrows():
     use_start_date = clear_date + timedelta(days=random.randint(0, 3))
     df_operation.at[idx, '운용상태'] = '운용' # 현재 상태 업데이트
     
-    # 출력상태 생성 (출력 80%, 미출력 20%)
+    # 출력상태 생성 (출력 20%, 미출력 80%)
     print_status = np.random.choice(['출력', '미출력'], p=[0.2, 0.8])
     df_operation.at[idx, '출력상태'] = print_status
 
@@ -226,7 +226,7 @@ for idx, row in df_operation.iterrows():
                 skip_disuse = True
             else:
                 # 10% 확률로 불용 처리 (사유 변경)
-                disuse_reason = '활용부서 부재' # 10% 불용 진행
+                disuse_reason = '활용부서부재' # 10% 불용 진행
         
         if not skip_disuse:
             disuse_base_date = pd.to_datetime(return_row['반납확정일자'])
@@ -247,29 +247,33 @@ for idx, row in df_operation.iterrows():
                 
             disuse_status = np.random.choice(['확정', '대기', '반려'], p=[0.70, 0.25, 0.05])
                 
-            # 불용일자 = 불용확정일자 (승인확정 시)
-            confirm_date_str = ''
-            if disuse_status == '확정':
-                confirm_date_str = (disuse_date + timedelta(days=7)).strftime('%Y-%m-%d')
-                disuse_date_str = confirm_date_str 
-            else:
-                disuse_date_str = disuse_date.strftime('%Y-%m-%d') # 확정 전이면 신청일
+            # 불용일자(=등록일자)와 확정일자 계산 로직 분리
+
+            # 1. 불용일자(등록일자): 승인 상태와 무관하게 신청 날짜로 고정
+            disuse_date_str = disuse_date.strftime('%Y-%m-%d')
             
+            # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 1~7일)
+            
+            if disuse_status == '확정':
+                random_days = random.randint(1, 7)  
+                confirm_date = disuse_date + timedelta(days=random_days)  
+                confirm_date_str = confirm_date.strftime('%Y-%m-%d')  
+                
             # 불용 데이터 생성
             disuse_row = {
                 # ---------------불용등록목록-----------------
-                '불용일자': disuse_date.strftime('%Y-%m-%d'),
-                '등록일자': disuse_date.strftime('%Y-%m-%d'),
+                '불용일자': disuse_date_str,
+                '등록일자': disuse_date_str,
                 '불용확정일자': confirm_date_str,
                 '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1], # 관리자가 보통 처리
                 '승인상태': disuse_status,
                 # 물품 정보
                 # ---------------불용물품목록-----------------
                 'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
-                    '물품고유번호': asset_id, '취득일자': row['취득일자'], '취득금액': total_amount,
-                    '정리일자': clear_date_str, # 취득 시 정리일자  
-                    '운용부서': '', '운용상태' : df_operation.at[idx, '운용상태'], '내용연수': life_years,
-                    '물품상태': return_row['물품상태'], '사유': disuse_reason
+                '물품고유번호': asset_id, '취득일자': row['취득일자'], '취득금액': total_amount,
+                '정리일자': clear_date_str, # 취득 시 정리일자  
+                '운용부서': '', '운용상태' : df_operation.at[idx, '운용상태'], '내용연수': life_years,
+                '물품상태': return_row['물품상태'], '사유': disuse_reason
             }
             disuse_list.append(disuse_row)
             
@@ -279,7 +283,7 @@ for idx, row in df_operation.iterrows():
                 # 이력 추가
                 operation_history_list.append({
                     '물품고유번호': asset_id,
-                    '변경일자': disuse_date.strftime('%Y-%m-%d'), # 불용일자
+                    '변경일자': disuse_date_str, # 불용일자 
                     '(이전)운용상태': '반납', '(변경)운용상태': '불용',
                     '사유': disuse_reason,
                     '관리자명': ADMIN_USER[1], '관리자ID': ADMIN_USER[0],
@@ -329,6 +333,7 @@ for idx, row in df_operation.iterrows():
             disposal_row = {
                 # ---------------처분목록-----------------
                 '처분일자': disposal_date.strftime('%Y-%m-%d'),
+                '등록일자': disposal_date.strftime('%Y-%m-%d'),
                 '처분정리구분': disposal_method,
                 '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
                 '승인상태': disposal_status,
