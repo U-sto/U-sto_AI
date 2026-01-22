@@ -5,6 +5,7 @@ from faker import Faker
 import random
 from datetime import datetime, timedelta
 
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SAVE_DIR = os.path.join(BASE_DIR, "data_lifecycle")
 os.makedirs(SAVE_DIR, exist_ok=True) # 폴더가 없으면 생성
@@ -106,18 +107,6 @@ DEPT_MASTER_DATA = [
     ("A351", "시설팀(ERICA)"),
     ("A320", "학생지원팀(ERICA)"),
 ]
-
-# 1-3. 사용자 마스터 (고정 인물 + 랜덤 인물)
-USER_MASTER_DATA = [
-    ("hyl0610", "황팀장", "ADMIN"),      # 관리자
-    ("badbergjr", "박대리", "STAFF"),    # 담당자
-]
-# 랜덤 사용자 10명 추가
-for _ in range(10):
-    uid = fake.user_name()
-    uname = fake.name()
-    USER_MASTER_DATA.append((uid, uname, "USER"))
-
 # ---------------------------------------------------------
 # 2. 데이터 생성 로직 (Phase 1)
 # ---------------------------------------------------------

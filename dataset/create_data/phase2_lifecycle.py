@@ -22,10 +22,33 @@ except FileNotFoundError:
     print("❌ 오류: '03_01_acquisition_master.csv' 파일이 없습니다. Phase 1을 먼저 실행해주세요.")
     exit()
 
-# 사용자/부서 마스터 (Phase 1과 동일하게 유지하거나, 별도 파일로 관리 권장)
-# 여기서는 시뮬레이션을 위해 일부 재정의
+# 사용자/부서 마스터 
 ADMIN_USER = ("hyl0610", "황팀장")
 STAFF_USER = ("badbergjr", "박대리")
+# ---------------------------------------------------------
+# 시뮬레이션 확률 상수 정의 (Magic Numbers 제거)
+# ---------------------------------------------------------
+# 출력 상태 확률 (출력, 미출력)
+PROBS_PRINT_STATUS = [0.2, 0.8]
+
+# 반납 발생 확률 (3년 초과, 5년 초과)
+PROB_RETURN_OVER_3Y = 0.3
+PROB_RETURN_OVER_5Y = 0.6
+
+# 반납 사유 확률 (사용연한, 고장, 불용, 사업, 잉여)
+REASONS_RETURN = ['사용연한경과', '고장/파손', '불용결정', '사업종료', '잉여물품']
+PROBS_RETURN_REASON = [0.4, 0.2, 0.2, 0.1, 0.1]
+
+# 승인 상태 확률 (확정, 대기, 반려) - 공통
+STATUS_CHOICES = ['확정', '대기', '반려']
+PROBS_STATUS_RETURN = [0.90, 0.095, 0.005]
+PROBS_STATUS_DISUSE = [0.70, 0.25, 0.05]
+PROBS_STATUS_DISPOSAL = [0.90, 0.08, 0.02]
+
+# 처분 방식 확률 (신품/중고품일 때 vs 아닐 때)
+METHODS_DISPOSAL = ['매각', '폐기', '멸실', '도난']
+PROBS_DISPOSAL_GOOD = [0.85, 0.13, 0.01, 0.01] # 상태 좋음
+PROBS_DISPOSAL_BAD = [0.95, 0.03, 0.01, 0.01]  # 상태 나쁨
 
 # ---------------------------------------------------------
 # 1. 데이터 분화 (Explosion) & 고유번호 부여
@@ -78,34 +101,32 @@ today = datetime.now()
 
 print("⏳ [Phase 2] 자산 생애주기 시뮬레이션 시작 (반납/불용/처분)...")
 
-for idx, row in df_operation.iterrows():
+for row in df_operation.itertuples():
+    idx = row.Index  # 인덱스 추출
     # -------------------------------------------------------
-    # 기본 변수 세팅 (요청하신 스타일대로 Unpacking)
+    # 기본 변수 세팅 (itertuples 접근 방식: row.컬럼명)
     # -------------------------------------------------------
     # [물품운용대장목록] 관련
-    g2b_full_code = row['G2B_목록번호'] # 추가
-    g2b_name = row['G2B_목록명']
-    asset_id = row['물품고유번호']
-    acq_date = pd.to_datetime(row['취득일자'])
-    total_amount = row['취득금액'] # 추가
-
-    # 정리일자 Null 처리
-    if pd.isna(row['정리일자']) or row['정리일자'] == '':
-        clear_date = acq_date # 임시
-        clear_date_str = ''
-    else:
-        clear_date = pd.to_datetime(row['정리일자'])
-        clear_date_str = clear_date.strftime('%Y-%m-%d')
-    
-    dept_name = row['운용부서'] # 추가
-    # 운용상태는 루프 내에서 변경 ?
-    life_years = row['내용연수']
+    g2b_full_code = row.G2B_목록번호
+    g2b_name = row.G2B_목록명
+    asset_id = row.물품고유번호
+    acq_date = pd.to_datetime(row.취득일자)
+    total_amount = row.취득금액
+    dept_name = row.운용부서
+    life_years = row.내용연수
 
     # [물품기본정보] 관련
-    acq_method = row['취득정리구분'] # 추가
-    dept_id = row['운용부서코드'] # 추가
-    # 수량 추가...
-    remark = row['비고'] # 추가
+    acq_method = row.취득정리구분
+    dept_id = row.운용부서코드
+    remark = row.비고
+
+    # 정리일자 Null 처리
+    if pd.isna(row.정리일자) or row.정리일자 == '':
+        clear_date = acq_date 
+        clear_date_str = ''
+    else:
+        clear_date = pd.to_datetime(row.정리일자)
+        clear_date_str = clear_date.strftime('%Y-%m-%d')
     
     # -------------------------------------------------------
     # 2-1. 운용 시작 (취득 -> 운용)
@@ -126,7 +147,7 @@ for idx, row in df_operation.iterrows():
     df_operation.at[idx, '운용상태'] = '운용' # 현재 상태 업데이트
     
     # 출력상태 생성 (출력 20%, 미출력 80%)
-    print_status = np.random.choice(['출력', '미출력'], p=[0.2, 0.8])
+    print_status = np.random.choice(['출력', '미출력'], p=PROBS_PRINT_STATUS)
     df_operation.at[idx, '출력상태'] = print_status
 
     operation_history_list.append({
@@ -156,21 +177,18 @@ for idx, row in df_operation.iterrows():
 
     # 반납 확률 로직
     prob_return = 0.0
-    if age_days > 365 * 3: prob_return = 0.3 # 3년 지남
-    if age_days > 365 * 5: prob_return = 0.6 # 5년 지남 (내구연한)
+    if age_days > 365 * 3: prob_return = PROB_RETURN_OVER_3Y # 3년 지남
+    if age_days > 365 * 5: prob_return = PROB_RETURN_OVER_5Y # 5년 지남 (내구연한)
     
     if random.random() < prob_return:
         # 반납 발생!
         # 반납 시점: 운용 시작일 ~ 오늘 사이 랜덤, 단 최소 1년은 썼다고 가정
         if age_days > 365:
-            return_date = use_start_date + timedelta(days=random.randint(365, age_days))
-            if return_date > today: return_date = today # 미래 날짜 방지
+            max_days = min(age_days, (today - use_start_date).days)
+            return_date = use_start_date + timedelta(days=random.randint(365, max_days))
             
             # 반납 사유 결정
-            return_reason = np.random.choice(
-                ['사용연한경과', '고장/파손', '불용결정', '사업종료', '잉여물품'], 
-                p=[0.4, 0.2, 0.2, 0.1, 0.1]
-            )
+            return_reason = np.random.choice(REASONS_RETURN, p=PROBS_RETURN_REASON)
             
             # 물품 상태 결정 (사유에 따라)
             if return_reason == '고장/파손': item_condition = '정비필요품'
@@ -179,7 +197,7 @@ for idx, row in df_operation.iterrows():
             else: item_condition = '중고품'
 
             # 반납 승인 절차 (90:9.5:0.5)
-            return_status = np.random.choice(['확정', '대기', '반려'], p=[0.90, 0.095, 0.005])
+            return_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_RETURN)
             
             # 반납 데이터 생성
             return_row = {
@@ -192,7 +210,7 @@ for idx, row in df_operation.iterrows():
                 # 물품 정보
                 # ---------------반납물품목록-----------------
                 'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
-                '물품고유번호': asset_id, '취득일자': row['취득일자'], '취득금액': total_amount,
+                '물품고유번호': asset_id, '취득일자': row.취득일자, '취득금액': total_amount,
                 '정리일자': clear_date_str, # 취득 시 정리일자  
                 '운용부서': dept_name, '운용상태': df_operation.at[idx, '운용상태'], '물품상태': item_condition, '사유': return_reason
             }
@@ -251,7 +269,7 @@ for idx, row in df_operation.iterrows():
                 else: # 불용결정 등
                     disuse_reason = '구형화'
                 
-            disuse_status = np.random.choice(['확정', '대기', '반려'], p=[0.70, 0.25, 0.05])
+            disuse_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_DISUSE)
                 
             # 불용일자(=등록일자)와 확정일자 계산 로직 분리
 
@@ -259,7 +277,8 @@ for idx, row in df_operation.iterrows():
             disuse_date_str = disuse_date.strftime('%Y-%m-%d')
             
             # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 1~7일)
-            
+            confirm_date_str = '' 
+
             if disuse_status == '확정':
                 random_days = random.randint(1, 7)  
                 confirm_date = disuse_date + timedelta(days=random_days)  
@@ -276,7 +295,7 @@ for idx, row in df_operation.iterrows():
                 # 물품 정보
                 # ---------------불용물품목록-----------------
                 'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
-                '물품고유번호': asset_id, '취득일자': row['취득일자'], '취득금액': total_amount,
+                '물품고유번호': asset_id, '취득일자': row.취득일자, '취득금액': total_amount,
                 '정리일자': clear_date_str, # 취득 시 정리일자  
                 '운용부서': '', '운용상태' : df_operation.at[idx, '운용상태'], '내용연수': life_years,
                 '물품상태': return_row['물품상태'], '사유': disuse_reason
@@ -312,21 +331,16 @@ for idx, row in df_operation.iterrows():
             
             if current_condition in ['신품', '중고품']:
                 # 매각 85%, 폐기 13%, 멸실 1%, 도난 1%
-                disposal_method = np.random.choice(
-                    ['매각', '폐기', '멸실', '도난'], 
-                    p=[0.85, 0.13, 0.01, 0.01]
-                )
+                disposal_method = np.random.choice(METHODS_DISPOSAL, p=PROBS_DISPOSAL_GOOD)
             else:
                 # 폐기 95%, 매각 3%, 멸실 1%, 도난 1%
-                disposal_method = np.random.choice(
-                    ['폐기', '매각', '멸실', '도난'], 
-                    p=[0.95, 0.03, 0.01, 0.01]
-                )
+                disposal_method = np.random.choice(METHODS_DISPOSAL, p=PROBS_DISPOSAL_BAD)
+            
             # 처분 사유는 불용 사유와 동일하게 설정 (요청사항 반영)
             disposal_reason = disuse_row['사유']
 
             # 처분 승인 상태 비율 설정 (확정 90%, 대기 8%, 반려 2%)
-            disposal_status = np.random.choice(['확정', '대기', '반려'], p=[0.90, 0.08, 0.02])
+            disposal_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_DISPOSAL)
             
             # 처분확정일자 생성 로직
             disposal_confirm_date_str = ''
@@ -345,7 +359,7 @@ for idx, row in df_operation.iterrows():
                 '승인상태': disposal_status,
                 # ---------------처분물품목록-----------------
                 'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
-                '물품고유번호': asset_id, '취득일자': row['취득일자'], '취득금액': total_amount,
+                '물품고유번호': asset_id, '취득일자': row.취득일자, '취득금액': total_amount,
                 '처분방식': disposal_method, '물품상태': disuse_row['물품상태'], '사유': disuse_row['사유'],
                 # ---------------처분등록정보-----------------
                 '불용일자': disuse_row['불용확정일자'],  # 불용승인확정일과 동일

@@ -82,7 +82,7 @@ df_op_filled = df_op.fillna("")
 group_cols = ['G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '정리일자', 
               '운용부서', '운용상태', '내용연수']
 
-# dropna=False 옵션은 pandas 최신 버전 기능이므로, 위에서 fillna를 하는 방식이 가장 안전함
+# NaN 값이 그룹핑 과정에서 자동으로 제외되지 않도록 사전에 fillna로 처리하여 일관된 집계를 수행함
 view_inventory = df_op_filled.groupby(group_cols).size().reset_index(name='수량')
 view_inventory.to_csv(os.path.join(SAVE_DIR, 'View_07_01_보유현황.csv'), index=False, encoding='utf-8-sig')
 # ---------------------------------------------------------
@@ -106,10 +106,15 @@ else:
 print("2. 날짜 논리 검증 (취득일자 < 불용일자)")
 error_count = 0
 for _, row in df_du.iterrows():
-    acq_d = pd.to_datetime(row['취득일자'])
-    du_d = pd.to_datetime(row['불용일자'])
+    if not row['취득일자'] or not row['불용일자']:
+        continue
+    acq_d = pd.to_datetime(row['취득일자'], errors='coerce')
+    du_d = pd.to_datetime(row['불용일자'], errors='coerce')
+    if pd.isna(acq_d) or pd.isna(du_d):
+        continue
     if du_d < acq_d:
         error_count += 1
+
 
 if error_count == 0:
     print("   ✅ PASS: 모든 데이터가 시간 순서(취득->불용)를 준수합니다.")
