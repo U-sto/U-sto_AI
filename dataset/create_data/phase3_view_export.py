@@ -22,11 +22,11 @@ try:
     df_hist = pd.read_csv(os.path.join(LOAD_DIR, '99_asset_status_history.csv'))
 
     # 데이터 프레임 전체의 NaN(결측치)를 빈 문자열로 치환
-    # groupby는 NaN 값을 가진 행을 제외하므로, '비고'나 '부서' 값이 비어 있는 행이 누락되지 않도록 사전에 치환
-    df_op = df_op.fillna('')
-    df_rt = df_rt.fillna('')
-    df_du = df_du.fillna('')
-    df_dp = df_dp.fillna('')
+    # groupby 시 NaN 값을 가진 행이 제외되지 않도록 '비고'나 '부서' 등 비-날짜 컬럼만 빈 문자열로 치환
+    df_op = df_op.fillna(value={'비고': '', '부서': ''})
+    df_rt = df_rt.fillna(value={'비고': '', '부서': ''})
+    df_du = df_du.fillna(value={'비고': '', '부서': ''})
+    df_dp = df_dp.fillna(value={'비고': '', '부서': ''})
     # df_hist는 날짜 계산이 필요하므로 나중에 처리
 except FileNotFoundError as e:
     print(f"❌ 오류: 파일이 없습니다. Phase 2를 먼저 실행해주세요. ({e})")
