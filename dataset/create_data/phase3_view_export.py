@@ -16,9 +16,16 @@ try:
     df_op = pd.read_csv(os.path.join(LOAD_DIR, '04_01_operation_master.csv'))
     df_rt = pd.read_csv(os.path.join(LOAD_DIR, '04_03_return_list.csv'))
     df_du = pd.read_csv(os.path.join(LOAD_DIR, '05_01_disuse_list.csv'))
-    df_dp = pd.read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))    # 처분
-    # 이력 데이터 로드 (보유현황 구성을 위해 필수)
+    df_dp = pd.read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))
     df_hist = pd.read_csv(os.path.join(LOAD_DIR, '99_asset_status_history.csv'))
+
+    # 데이터 프레임 전체의 NaN(결측치)를 빈 문자열로 치환
+    # 이를 수행하지 않으면 groupby 시 '비고'나 '부서'가 없는 데이터가 모두 누락됨 (41005 -> 2333 발생 원인)
+    df_op = df_op.fillna('')
+    df_rt = df_rt.fillna('')
+    df_du = df_du.fillna('')
+    df_dp = df_dp.fillna('')
+    # df_hist는 날짜 계산이 필요하므로 나중에 처리
 except FileNotFoundError as e:
     print(f"❌ 오류: 파일이 없습니다. Phase 2를 먼저 실행해주세요. ({e})")
     exit()
@@ -28,16 +35,36 @@ except PermissionError as e:
 except Exception as e:
     print(f"❌ CSV 로드 중 알 수 없는 오류: {e}")
     exit()
-
-# 날짜 컬럼 형변환 (검증용)
-date_cols = ['취득일자', '정리일자']
-for col in date_cols:
-    if col in df_op.columns: df_op[col] = pd.to_datetime(df_op[col])
-
 # ---------------------------------------------------------
 # 1. 화면별 View CSV 생성
 # ---------------------------------------------------------
 print("⚙️ [Phase 3] 화면별 요구사항에 따른 View CSV 생성 중...")
+
+# [04-01] 물품 운용 - 물품기본정보 (Grouped View)
+# 개념: 현재 시점의 최종 상태를 보여줌. (과거 날짜로 필터링해도 상태는 '현재' 상태)
+print("   - [04-01] 운용 화면용 기본정보 집계 중...")
+
+# 그룹핑 기준 컬럼 (물품기본정보에 들어가는 속성들 중 고유번호 제외)
+group_cols_op = [
+    'G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '정리일자', 
+    '운용부서', '운용상태', '내용연수', '승인상태', 
+    '취득정리구분', '운용부서코드', '비고'
+]
+
+# 데이터가 존재하는지 확인 후 진행
+if set(group_cols_op).issubset(df_op.columns):
+    # 현재 상태(df_op)를 기준으로 그룹핑하여 수량 계산
+    view_op_basic = df_op.groupby(group_cols_op).size().reset_index(name='수량')
+    # 컬럼 순서 재정렬 
+    final_cols_op = [
+        'G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '정리일자', 
+        '운용부서', '운용상태', '내용연수', '수량', '승인상태', 
+        '취득정리구분', '운용부서코드', '비고'
+    ]
+    view_op_basic = view_op_basic[final_cols_op]
+    view_op_basic.to_csv(os.path.join(SAVE_DIR, 'View_04_01_운용_기본정보.csv'), index=False, encoding='utf-8-sig')
+else:
+    print("   ⚠️ 경고: 04_01 파일에 필요한 컬럼이 부족합니다. Phase 2 코드를 확인하세요.")
 
 # [04-03] 물품 반납 관리
 # 1) 상단 그리드: 반납 등록 목록 (신청 건 위주)
@@ -73,43 +100,67 @@ view_dp_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_처분물품목록.csv'),
 
 
 # [07-01] 보유 현황 조회 (Aggregation)
-# "특정 시점을 조회했을 때 그 당시의 수량이 나와야 한다."
-# 해결책: 단순히 현재 상태를 카운트하는 것이 아니라, 이력(History) 데이터를 가공하여
-#         각 자산이 '언제부터(StartDate) 언제까지(EndDate) 어떤 상태(Status)였는지'를 기록한 데이터를 생성합니다.
-#         시스템(UI)에서는 이 테이블을 조회 기간과 비교(Between)하여 카운트하면 됩니다.
-print("   - 보유 현황(과거 시점 조회용) 데이터 생성 중...")
+# 개념: "그 당시"의 수량을 보여줌.
+# 구현: (속성 + 유효기간)으로 그룹핑하여 수량 집계
+print("   - [07-01] 보유 현황(과거 시점 조회용) 데이터 생성 중...")
 
 # 1. 이력 데이터 정렬 (물품별, 날짜순)
 df_hist['변경일자'] = pd.to_datetime(df_hist['변경일자'])
 df_hist = df_hist.sort_values(by=['물품고유번호', '변경일자'])
 
 # 2. 유효 기간(Start ~ End) 생성
-# StartDate: 변경일자
-# EndDate: 다음 상태로 변경되기 전날 (현재 상태면 9999-12-31)
 df_hist['유효시작일자'] = df_hist['변경일자']
+# 다음 상태로 변하기 전날이 종료일
 df_hist['유효종료일자'] = df_hist.groupby('물품고유번호')['변경일자'].shift(-1) - pd.Timedelta(days=1)
+# 현재 유효한 상태(마지막 상태)는 2099년까지
+MAX_FUTURE_DATE = pd.Timestamp('2099-12-31')
+df_hist['유효종료일자'] = df_hist['유효종료일자'].fillna(MAX_FUTURE_DATE)
 
-# 마지막 상태(현재까지 유효함)는 종료일자를 먼 미래로 설정
-df_hist['유효종료일자'] = df_hist['유효종료일자'].fillna(pd.Timestamp('2099-12-31'))
+# 3. 속성 정보 결합 (운용대장에서 변하지 않는 정보들)
+static_cols = [
+    '물품고유번호', 'G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '정리일자', 
+    '내용연수', '승인상태', '취득정리구분', '운용부서코드', '비고'
+]
+df_static = df_op[static_cols].drop_duplicates(subset=['물품고유번호'])
+df_scd_raw = pd.merge(df_hist, df_static, on='물품고유번호', how='left')
 
-# 3. 필요한 정보 조인 (G2B목록번호 등)
-# 물품고유번호를 기준으로 기본 정보(G2B정보, 취득금액 등)를 붙여줍니다.
-df_info = df_op[['물품고유번호', 'G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '내용연수']]
-df_scd = pd.merge(df_hist, df_info, on='물품고유번호', how='left')
+# 부서 정보 (Phase 2에서 부서 이동 로직이 없으므로 운용대장 부서 사용)
+df_dept = df_op[['물품고유번호', '운용부서']].drop_duplicates()
+df_scd_raw = pd.merge(df_scd_raw, df_dept, on='물품고유번호', how='left')
 
-# 4. 컬럼 정리 및 저장
-# 이 테이블을 사용하면 SQL 쿼리 등으로 "WHERE 유효시작일자 <= '2024-01-01' AND 유효종료일자 >= '2024-01-01'"
-# 조건을 걸어 2024년 1월 1일 당시의 보유 수량(상태별 카운트)을 정확히 뽑을 수 있습니다.
-view_inventory_scd = df_scd[[
-    'G2B_목록번호', 'G2B_목록명', '물품고유번호', 
-    '취득일자', '취득금액', '내용연수',
-    '(변경)운용상태',  # 당시 상태 (운용, 반납, 불용 등)
+# 상태값 매핑: 이력 데이터의 '(변경)운용상태'가 그 당시의 실제 상태임
+df_scd_raw['운용상태'] = df_scd_raw['(변경)운용상태']
+
+# 그룹핑 전 NaN 처리 (필수!)
+# merge 과정에서 발생했거나 원본에 있던 NaN을 빈 문자열로 바꿔야 groupby에서 누락되지 않음
+df_scd_raw = df_scd_raw.fillna('')
+
+# 4. 그룹핑 및 수량 집계 (Aggregation)
+# 물품고유번호를 제거하고, 나머지 모든 속성이 동일한 건들을 묶어서 수량을 셉니다.
+# 그룹핑 기준: 화면에 표시될 모든 속성 + 유효기간
+group_cols_scd = [
+    'G2B_목록번호', 'G2B_목록명', 
+    '취득일자', '취득금액', '정리일자', 
+    '운용부서', '운용상태', '내용연수', '승인상태', 
+    '취득정리구분', '운용부서코드', '비고',
     '유효시작일자', '유효종료일자'
-]].copy()
+]
 
-# CSV 저장 시 날짜 포맷 정리
-view_inventory_scd['유효시작일자'] = view_inventory_scd['유효시작일자'].dt.strftime('%Y-%m-%d')
-view_inventory_scd['유효종료일자'] = view_inventory_scd['유효종료일자'].dt.strftime('%Y-%m-%d')
+# 날짜 포맷팅 (그룹핑 키로 쓰기 위해)
+df_scd_raw['유효시작일자'] = df_scd_raw['유효시작일자'].dt.strftime('%Y-%m-%d')
+df_scd_raw['유효종료일자'] = df_scd_raw['유효종료일자'].dt.strftime('%Y-%m-%d')
+
+# 수량 집계 (size -> 수량)
+view_inventory_scd = df_scd_raw.groupby(group_cols_scd).size().reset_index(name='수량')
+
+# 5. 최종 컬럼 정리
+final_scd_cols = [
+    'G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '정리일자', 
+    '운용부서', '운용상태', '내용연수', '수량', '승인상태', 
+    '취득정리구분', '운용부서코드', '비고',
+    '유효시작일자', '유효종료일자'
+]
+view_inventory_scd = view_inventory_scd[final_scd_cols].copy()
 
 view_inventory_scd.to_csv(os.path.join(SAVE_DIR, 'View_07_01_보유현황_이력기반.csv'), index=False, encoding='utf-8-sig')
 
@@ -123,7 +174,7 @@ print("\n🔍 [Phase 3] 데이터 정합성 검증 시작")
 # 9999-12-31일자(현재 유효한 상태)를 필터링하여 운용대장과 비교
 current_snapshot = view_inventory_scd[view_inventory_scd['유효종료일자'] == '2099-12-31']
 total_op = len(df_op)
-total_snap = len(current_snapshot)
+total_snap = current_snapshot['수량'].sum()
 
 print(f"1. 최신 상태 동기화 검증: 운용대장({total_op}) vs 이력스냅샷({total_snap})")
 if total_op == total_snap:
