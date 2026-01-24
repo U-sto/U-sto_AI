@@ -27,6 +27,7 @@ try:
     df_rt = df_rt.fillna(value={'비고': '', '부서': ''})
     df_du = df_du.fillna(value={'비고': '', '부서': ''})
     df_dp = df_dp.fillna(value={'비고': '', '부서': ''})
+
     # df_hist는 날짜 계산이 필요하므로 나중에 처리
 except FileNotFoundError as e:
     print(f"❌ 오류: 파일이 없습니다. Phase 2를 먼저 실행해주세요. ({e})")
@@ -179,6 +180,18 @@ current_snapshot_qty = pd.to_numeric(
     current_snapshot['수량'],
     errors='coerce'
 )
+# 수량 숫자 변환 시 데이터 품질 검증 추가
+coerced_mask = current_snapshot['수량'].notna() & current_snapshot_qty.isna()
+if coerced_mask.any():
+    sample_values = (
+        current_snapshot.loc[coerced_mask, '수량']
+        .drop_duplicates()
+        .astype(str)
+        .head()
+        .tolist()
+    )
+    print(f"⚠️ 경고: 비숫자 수량 {coerced_mask.sum()}건")
+    print(f"   예시 값: {sample_values}")
 
 total_snap = current_snapshot_qty.sum(skipna=True)
 

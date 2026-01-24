@@ -189,10 +189,13 @@ for row in df_operation.itertuples():
     if random.random() < prob_return:
         # 반납 발생!
         # 반납 시점: 운용 시작일 ~ 오늘 사이 랜덤, 단 최소 1년은 썼다고 가정
-        if age_days > 365:
-            max_days = min(age_days, (today - use_start_date).days)
-            return_date = use_start_date + timedelta(days=random.randint(365, max_days))
-            
+        days_since_use_start = (today - use_start_date.date()).days
+
+        if age_days >= 365 and days_since_use_start >= 365:
+            max_days = min(age_days, days_since_use_start)
+            return_date = use_start_date + timedelta(
+                days=random.randint(365, max_days)
+    )
             # 반납 사유 결정
             return_reason = np.random.choice(REASONS_RETURN, p=PROBS_RETURN_REASON)
             
@@ -210,7 +213,8 @@ for row in df_operation.itertuples():
 
             if return_status == '확정':
                 random_days = random.randint(1, 7)
-                return_confirm_date = return_date + timedelta(days=random_days)
+                return_confirm_date = (return_date + timedelta(days=random_days)).date()
+
                 if return_confirm_date > today:
                     return_confirm_date = today
 
@@ -235,7 +239,7 @@ for row in df_operation.itertuples():
                 # ---------------반납등록목록-----------------
                 '반납일자': return_date.strftime('%Y-%m-%d'),
                 '등록일자': return_date.strftime('%Y-%m-%d'), # 등록일자 = 반납신청일
-                '반납확정일자': return_confirm_date_str.strftime('%Y-%m-%d'),
+                '반납확정일자': return_confirm_date_str,
                 '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
                 '승인상태': return_status,
                 # 물품 정보
@@ -396,7 +400,7 @@ for row in df_operation.itertuples():
                 # 이력 추가
                 operation_history_list.append({
                     '물품고유번호': asset_id,
-                    '변경일자': disposal_confirm_date_str, # 불용 확정일자
+                    '변경일자': disposal_confirm_date_str, # 처분 확정일자
                     '(이전)운용상태': '불용', '(변경)운용상태': '처분',
                     '사유': f"{disposal_method} 완료",
                     '관리자명': ADMIN_USER[1], '관리자ID': ADMIN_USER[0],
