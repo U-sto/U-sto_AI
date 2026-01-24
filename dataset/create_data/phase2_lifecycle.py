@@ -179,7 +179,7 @@ for row in df_operation.itertuples():
     
     # 확률적 반납 결정 (내구연한 도래 여부와 관계없이 발생 가능)
     # 오래된 물건일수록 반납 확률 증가
-    age_days = (today - acq_date).days
+    age_days = (today - acq_date.date()).days
 
     # 반납 확률 로직
     prob_return = 0.0
@@ -276,8 +276,9 @@ for row in df_operation.itertuples():
             disuse_base_date = pd.to_datetime(return_row['반납확정일자'])
             disuse_date = disuse_base_date + timedelta(days=random.randint(30, 180))
 
-            if disuse_date > today:
-                disuse_date = today
+            # disuse_date는 datetime → date로 비교
+            if disuse_date.date() > today:
+                disuse_date = datetime.combine(today, datetime.min.time())
             
             # 불용 사유 결정 (4종) - 반납 사유와 매핑
             if not disuse_reason:
@@ -371,7 +372,8 @@ for row in df_operation.itertuples():
             if disposal_status == '확정':
                 # 신청일로부터 3~7일 후 확정
                 disposal_confirm_date = disposal_date + timedelta(days=random.randint(3, 7))
-                if disposal_confirm_date > today: disposal_confirm_date = today # 미래 날짜 방지
+                if disposal_confirm_date.date() > today: 
+                    disposal_confirm_date = datetime.combine(today, datetime.min.time()) # 미래 날짜 방지
                 disposal_confirm_date_str = disposal_confirm_date.strftime('%Y-%m-%d')
 
             disposal_row = {
