@@ -311,11 +311,11 @@ for row in df_operation.itertuples():
             # 1. 불용일자: 승인 상태와 무관하게 신청 날짜로 고정
             disuse_date_str = disuse_date.strftime('%Y-%m-%d')
             
-            # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 2주~3개월)
+            # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 2주~1개월)
             disuse_confirm_date_str = '' 
 
             if disuse_status == '확정':
-                random_days = random.randint(14, 90)  
+                random_days = random.randint(14, 30)  
                 disuse_confirm_date = disuse_date + timedelta(days=random_days)  
                 if disuse_confirm_date > today:
                     disuse_confirm_date = today
@@ -388,8 +388,8 @@ for row in df_operation.itertuples():
             # 처분확정일자 생성 로직
             disposal_confirm_date_str = ''
             if disposal_status == '확정':
-                # 신청일로부터 3~7일 후 확정
-                disposal_confirm_date = disposal_date + timedelta(days=random.randint(3, 7))
+                # 신청일로부터 1~3개월 후 확정
+                disposal_confirm_date = disposal_date + timedelta(days=random.randint(30, 90))
                 if disposal_confirm_date > today: 
                     disposal_confirm_date = today # 미래 날짜 방지
                 disposal_confirm_date_str = disposal_confirm_date.strftime('%Y-%m-%d')
