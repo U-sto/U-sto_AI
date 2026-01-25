@@ -311,11 +311,11 @@ for row in df_operation.itertuples():
             # 1. 불용일자: 승인 상태와 무관하게 신청 날짜로 고정
             disuse_date_str = disuse_date.strftime('%Y-%m-%d')
             
-            # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 1~7일)
+            # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 2주~3개월)
             disuse_confirm_date_str = '' 
 
             if disuse_status == '확정':
-                random_days = random.randint(1, 7)  
+                random_days = random.randint(14, 90)  
                 disuse_confirm_date = disuse_date + timedelta(days=random_days)  
                 if disuse_confirm_date > today:
                     disuse_confirm_date = today
