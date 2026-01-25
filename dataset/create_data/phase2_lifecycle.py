@@ -5,7 +5,7 @@ import random
 from datetime import datetime, timedelta
 from faker import Faker
 
-fake = Faker()
+fake = Faker('ko_KR') 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data_lifecycle") # create_data/data_lifecycle
@@ -206,14 +206,16 @@ for row in df_operation.itertuples():
             elif return_reason == '잉여물품': item_condition = '신품' # 잉여물품은 주로 신품/상태좋음
             else: item_condition = '중고품'
 
-            # 반납 승인 절차 (90:9.5:0.5)
+            # 반납 승인 절차 (85:10:5)
             return_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_RETURN)
             
             # [추가] 대기 상태면 반납일자를 최근으로 재설정
             if return_status == '대기':
                 # 최근 구간에서 반납 신청일자 재생성
-                return_date = fake.date_between(start_date=RECENT_WAIT_START, end_date=today)
-                return_date = datetime(return_date.year, return_date.month, return_date.day)
+                 # 단, 기존 return_date / clear_date + 365일 / RECENT_WAIT_START 중 가장 늦은 날짜보다 과거로 가지 않도록 제한
+                min_allowed_date = max(return_date, clear_date + timedelta(days=365), RECENT_WAIT_START)
+                recent_wait_date = fake.date_between(start_date=min_allowed_date.date(), end_date=today.date())
+                return_date = datetime(recent_wait_date.year, recent_wait_date.month, recent_wait_date.day)
 
             # 반납 확정일자 : 확정일 때만 생성 (신청일 + 3일 ~ 2주)
             return_confirm_date_str = '' 
@@ -304,7 +306,13 @@ for row in df_operation.itertuples():
             
             # [추가] 대기 상태면 불용일자를 최근으로 재설정
             if disuse_status == '대기':
-                temp_date = fake.date_between(start_date=RECENT_WAIT_START, end_date=today)
+                 # 대기 상태 시 불용일자 재생성 범위를 disuse_base_date(=return_confirm_date) 이후로 제한
+                start_for_wait = max(disuse_base_date, RECENT_WAIT_START)
+                # start_date가 today보다 클 수 있는 경우를 방지
+                if start_for_wait > today:
+                    start_for_wait = today
+        
+                temp_date = fake.date_between(start_date=start_for_wait, end_date=today)
                 disuse_date = datetime(temp_date.year, temp_date.month, temp_date.day)
 
             # 불용일자와 확정일자 계산 로직 분리
@@ -383,7 +391,10 @@ for row in df_operation.itertuples():
 
             # [추가] 대기 상태면 처분일자를 최근으로 재설정
             if disposal_status == '대기':
-                temp_date = fake.date_between(start_date=RECENT_WAIT_START, end_date=today)
+                # 대기 상태 재생성 시, 처분일자가 불용확정일자(disposal_base_date)보다
+                # 앞서지 않도록 start_date를 max(disposal_base_date, RECENT_WAIT_START)로 제한
+                start_date_for_wait = max(disposal_base_date, RECENT_WAIT_START)
+                temp_date = fake.date_between(start_date=start_date_for_wait, end_date=today)
                 disposal_date = datetime(temp_date.year, temp_date.month, temp_date.day)
 
             # 처분확정일자 생성 로직
