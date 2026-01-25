@@ -217,22 +217,28 @@ for i in range(TOTAL_COUNT):
     acq_date = datetime(temp_date.year, temp_date.month, temp_date.day)
 
     # 4) 정리일자 생성
-    # 확정: 취득일 + (1일~7일) 혹은 (1달~2달)
+    # 확정: 취득일 + (3일 ~2주)
     # 대기/반려: NULL (None)
     clear_date = None
     if approval_status == '확정':
-        delay_type = random.choice(['short', 'long'])
-        if delay_type == 'short':
-            days_add = random.randint(1, 7)
-        else:
-            days_add = random.randint(30, 60)
-        # datetime + timedelta = datetime (안전함)  
-        clear_date = acq_date + timedelta(days=days_add)
-
+        random_days = random.randint(3, 14)
+        clear_date = (acq_date + timedelta(days=random_days))
         # 정리일자는 현재 날짜를 초과하지 않도록 제한
         if clear_date > today:
             clear_date = today
     
+    '''
+    return_confirm_date_str = '' 
+
+            if return_status == '확정':
+                random_days = random.randint(1, 7)
+                return_confirm_date = (return_date + timedelta(days=random_days))
+
+                if return_confirm_date > today:
+                    return_confirm_date = today
+
+                return_confirm_date_str = return_confirm_date.strftime('%Y-%m-%d')
+                '''
     # 5) 수량 및 금액 생성
     # 취득 단계에서는 '묶음'으로 들어옴 (수량 N개 가능)
     # PC/노트북은 보통 1~10대, 책상은 10~50대 등 품목별 차이 반영
