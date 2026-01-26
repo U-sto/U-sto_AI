@@ -113,6 +113,41 @@ def build_function_decision_prompt():
     """)
 
 
+# FAQ 데이터를 프롬프트에 주입
+def build_faq_prompt(question: str) -> str:
+    """
+    질문과 관련된 FAQ가 있을 경우에만 프롬프트 섹션을 생성합니다.
+    """
+    # 서비스 로직 호출 (키워드 매칭 수행)
+    faq_data = get_relevant_faq_string(question)
+    
+    if not faq_data:
+        return "" 
+
+    # get_relevant_faq_string가 전체 FAQ 목록을 반환하는 경우
+    # (예: "[FAQ 전체 내용 목록]"으로 시작)와 질문 연관 FAQ만 반환하는
+    # 경우를 구분하여 안내 문구를 다르게 구성한다.
+    is_full_list = faq_data.lstrip().startswith("[FAQ 전체 내용 목록]")
+    if is_full_list:
+        header = "[FAQ 지식 베이스 (전체 목록)]"
+        description = (
+            "전체 FAQ 목록이 제공되었습니다.\n"
+            "사용자 요청을 충실히 반영하면서, 필요할 경우 아래 FAQ 목록을 참고하여 답변하세요."
+        )
+    else:
+        header = "[FAQ 지식 베이스 (관련 내용)]"
+        description = (
+            "사용자 질문과 연관된 FAQ 내용이 발견되었습니다.\n"
+            "아래 내용을 참고하여 답변하세요."
+        )
+    return textwrap.dedent(f"""
+    {header}
+    {description}
+
+    {faq_data}
+    """)
+
+
 def assemble_prompt(context: str, question: str) -> str:
     """
     System / Role / Safety / Function 판단 규칙과
@@ -129,6 +164,12 @@ def assemble_prompt(context: str, question: str) -> str:
 
     if config.ENABLE_SAFETY_PROMPT:
         sections.append(build_safety_prompt())
+
+    # FAQ 프롬프트 사용 여부는 다른 ENABLE_* 플래그들과 동일하게 config에서 직접 제어한다.
+    if getattr(config, "ENABLE_FAQ_PROMPT", False):
+        faq_section = build_faq_prompt(question)
+        if faq_section:
+            sections.append(faq_section)
 
     if config.ENABLE_FUNCTION_DECISION_PROMPT:
         sections.append(build_function_decision_prompt())
@@ -174,6 +215,7 @@ def build_qa_generation_prompt() -> str:
     [내용]:
     {context}
     """)
+
 
 # Function Calling(Tools) 전용 프롬프트
 def build_tool_aware_system_prompt():

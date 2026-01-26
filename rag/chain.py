@@ -3,6 +3,7 @@ import logging
 import json
 
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
+
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -28,6 +29,7 @@ def run_rag_chain(
     user_query: str,
     retriever_top_k: int = RETRIEVER_TOP_K
 ):
+    
     # Function Calling (도구 사용) 우선 확인
     try:
         # 1. 도구 정의 및 바인딩
@@ -156,7 +158,6 @@ def run_rag_chain(
     except Exception as e:
         # 도구 파이프라인 전체 에러 핸들링
         logger.error(f"[Tool System Error] 도구 처리 중 오류 무시 후 RAG 전환 시도: {e}", exc_info=True)
-
 
     # 0. 질문 분류 (LLM-first 판단)
     classifier_prompt = PromptTemplate.from_template(

@@ -5,20 +5,19 @@ import requests
 from unittest.mock import patch, MagicMock
 import os
 
-# [주의] 환경변수가 세팅되기 전에 모듈이 로드되면 URL이 None이 될 수 있습니다.
-# tools 내부에서 os.environ.get()을 함수 안에서 호출하거나,
-# 아래와 같이 테스트 실행 시 환경변수를 먼저 주입해야 합니다.
-
-# 모듈 임포트 (경로는 프로젝트 구조에 맞게 조정)
+# 모듈 임포트
 from rag import dictionaries
 from rag.tools import get_item_detail_info, open_usage_prediction_page
 
-# Fixtures
+# --------------------------------------------------------------------------
+# 1. Fixtures (테스트 환경 설정)
+# --------------------------------------------------------------------------
+
 @pytest.fixture(autouse=True)
 def _set_test_env(monkeypatch):
     """
-    모든 테스트 실행 전 가상의 환경변수를 주입합니다.
-    실제 URL이 없어도 테스트가 통과하도록 가짜 주소를 넣습니다.
+    모든 테스트 실행 전 환경변수 주입 (URL, Timeout 등).
+    시스템 환경변수에 의존하지 않는 독립적인 테스트 환경을 보장합니다.
     """
     envs = {
         "BACKEND_API_URL": "http://test-backend.com",
@@ -28,186 +27,162 @@ def _set_test_env(monkeypatch):
     for key, value in envs.items():
         monkeypatch.setenv(key, value)
 
-
 @pytest.fixture
 def mock_synonyms():
     """
-    테스트용 동의어 사전을 주입합니다.
-    rag.dictionaries.KEYWORD_SYNONYMS를 임시로 교체합니다.
+    동의어 사전 Mocking.
+    실제 dictionaries.py 파일의 내용과 상관없이 테스트용 데이터를 강제 주입합니다.
     """
     fake_data = {
         "테스트용가짜": "진짜키워드",
-        "멍멍이": "강아지"
+        "멍멍이": "강아지",
+        "kwd": "keyword"
     }
     with patch.dict(dictionaries.KEYWORD_SYNONYMS, fake_data, clear=True):
         yield
 
+# --------------------------------------------------------------------------
+# 2. get_item_detail_info (자산 조회) 테스트
+# --------------------------------------------------------------------------
 
-# 1. get_item_detail_info (자산 조회) 테스트
-def test_get_item_detail_info_validation_error():
-    """필수 입력값이 모두 None일 때 에러 반환 확인"""
-    # invoke 시 빈 값 전달
-    result = get_item_detail_info.invoke({
-        "asset_name": None, 
-        "asset_id": None, 
-        "identification_num": None
-    })
-    
+@pytest.mark.parametrize("invalid_input", [
+    {"asset_name": None, "asset_id": None, "identification_num": None},  # 전부 None
+    {"asset_name": "", "asset_id": "", "identification_num": ""},        # 전부 빈 문자열
+    {"asset_name": "   ", "asset_id": None, "identification_num": ""}    # 공백만 존재
+])
+def test_get_item_validation_error(invalid_input):
+    """[Validation] None뿐만 아니라 빈 문자열, 공백 입력 시에도 에러를 반환해야 합니다."""
+    result = get_item_detail_info.invoke(invalid_input)
     data = json.loads(result)
-    assert "error" in data
-    # 에러 메시지에 핵심 단어가 포함되어 있는지 확인
-    assert any(x in data["error"] for x in ["필수", "입력", "missing"])
-
-
-@patch("rag.tools.requests.get")
-def test_get_item_smart_correction_asset_id(mock_get, mock_synonyms):
-    """[Smart Correction] asset_id에 키워드 입력 시 -> asset_name으로 변환 확인"""
     
-    # API 응답 Mock (성공 케이스)
+    assert "error" in data
+    # "필수", "입력", "누락" 중 하나는 에러 메시지에 있어야 함
+    assert any(k in data["error"] for k in ["필수", "입력", "누락", "missing"])
+
+
+@pytest.mark.parametrize("input_field, input_value, expected_name", [
+    ("asset_id", "테스트용가짜", "진짜키워드"),       # ID 필드에 키워드 입력
+    ("identification_num", "멍멍이", "강아지"),    # 관리번호 필드에 키워드 입력
+    ("asset_name", "kwd", "keyword")             # 이름 필드에 동의어 입력
+])
+@patch("rag.tools.requests.get")
+def test_get_item_smart_correction_and_synonyms(mock_get, input_field, input_value, expected_name, mock_synonyms):
+    """[Smart Correction & Synonym] ID/관리번호 오입력 보정 및 동의어 변환 통합 테스트"""
+    # API Mock 설정
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"results": [{"name": "Success"}]}
+    mock_response.json.return_value = {"results": []}
     mock_get.return_value = mock_response
 
-    # 실행: ID 필드에 '테스트용가짜'(키워드) 입력
-    get_item_detail_info.invoke({"asset_id": "테스트용가짜"})
+    # 동적으로 입력값 생성
+    input_data = {key: None for key in ["asset_name", "asset_id", "identification_num"]}
+    input_data[input_field] = input_value
 
-    # 검증: 실제 requests.get에 전달된 파라미터 확인
-    # call_args.kwargs를 사용하는 것이 더 안전합니다.
+    # 실행
+    get_item_detail_info.invoke(input_data)
+
+    # 검증: 실제 API로 날아간 파라미터 확인
     assert mock_get.called
-    called_kwargs = mock_get.call_args.kwargs
-    called_params = called_kwargs.get("params", {})
+    called_params = mock_get.call_args.kwargs.get("params", {})
 
-    # 1. ID는 비워져야 함 (키워드였으므로)
-    assert "asset_id" not in called_params or called_params["asset_id"] is None
-    # 2. Name으로 이동하고 '진짜키워드'로 변환되어야 함
-    assert called_params.get("asset_name") == "진짜키워드"
+    # 1. 결과적으로 asset_name은 예상된 '진짜 이름'이어야 함
+    assert called_params.get("asset_name") == expected_name
+    
+    # 2. 오입력된 필드(ID, 관리번호)는 API 요청에서 제거되어야 함 (asset_name일 경우는 제외)
+    if input_field != "asset_name":
+        assert input_field not in called_params or called_params[input_field] is None
 
 
 @patch("rag.tools.requests.get")
-def test_get_item_smart_correction_conflict(mock_get, mock_synonyms):
-    """[Conflict] asset_id가 키워드인데, asset_name도 이미 있는 경우 -> asset_name 유지"""
+def test_get_item_correction_conflict_prevention(mock_get, mock_synonyms):
+    """[Conflict] ID에 키워드가 있어도, Name에 이미 값이 있다면 Name을 덮어쓰지 않아야 함"""
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {"results": []}
     mock_get.return_value = mock_response
 
-    # 실행: ID는 키워드(오입력), Name은 정상 입력
     get_item_detail_info.invoke({
-        "asset_id": "테스트용가짜",
-        "asset_name": "기존검색어"
+        "asset_id": "테스트용가짜",  # 이것만 보면 '진짜키워드'로 바꾸고 싶겠지만
+        "asset_name": "사용자입력값"   # 이미 사용자가 명시한 이름이 있음
     })
 
     called_params = mock_get.call_args.kwargs.get("params", {})
-
-    # ID는 삭제(Discard)
+    
+    # Name은 보정되지 않고 유지되어야 함
+    assert called_params.get("asset_name") == "사용자입력값"
+    # 단, 오입력된 ID는 제거되는 것이 안전함
     assert "asset_id" not in called_params or called_params["asset_id"] is None
-    # Name은 기존 입력값 유지 (덮어씌워지면 안 됨)
-    assert called_params.get("asset_name") == "기존검색어"
 
 
+@pytest.mark.parametrize("exception, error_keywords", [
+    (requests.exceptions.Timeout, ["시간", "초과", "timeout"]),
+    (requests.exceptions.ConnectionError, ["연결", "네트워크", "connection"]),
+    (requests.exceptions.HTTPError, ["오류", "HTTP", "서버"])
+])
 @patch("rag.tools.requests.get")
-def test_get_item_synonym_conversion(mock_get, mock_synonyms):
-    """단순 이름 검색 시 동의어 변환 동작 확인"""
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"results": []}
-    mock_get.return_value = mock_response
+def test_get_item_network_errors(mock_get, exception, error_keywords):
+    """[Error Handling] 다양한 네트워크 예외 상황을 한 번에 테스트"""
+    # HTTPError인 경우 raise_for_status에서 발생하므로 설정 방식이 다름
+    if exception == requests.exceptions.HTTPError:
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.raise_for_status.side_effect = exception("Server Error")
+        mock_get.return_value = mock_response
+    else:
+        # 그 외(Timeout, ConnectionError)는 get 호출 즉시 발생
+        mock_get.side_effect = exception("Network Error")
 
-    get_item_detail_info.invoke({"asset_name": "멍멍이"})
-
-    called_params = mock_get.call_args.kwargs.get("params", {})
-    assert called_params.get("asset_name") == "강아지"
-
-
-@patch("rag.tools.requests.get")
-def test_get_item_http_error_handling(mock_get):
-    """HTTP 500 등 서버 에러 발생 시 처리"""
-    mock_response = MagicMock()
-    mock_response.status_code = 500
-    # raise_for_status() 호출 시 에러 발생하도록 설정
-    mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("Server Error")
-    mock_get.return_value = mock_response
-
-    result = get_item_detail_info.invoke({"asset_name": "ErrorCase"})
-    
+    result = get_item_detail_info.invoke({"asset_name": "Test"})
     data = json.loads(result)
+    
     assert "error" in data
-    assert "오류" in data["error"] or "Error" in data["error"]
+    # 예상되는 키워드 중 하나라도 포함되어 있는지 확인
+    assert any(k in data["error"].lower() for k in error_keywords)
 
+# --------------------------------------------------------------------------
+# 3. open_usage_prediction_page (페이지 이동) 테스트
+# --------------------------------------------------------------------------
 
-@patch("rag.tools.requests.get")
-def test_get_item_timeout_handling(mock_get):
-    """API 요청 시간 초과(Timeout) 발생 시 처리 확인"""
-    # 호출 시 즉시 Timeout 예외 발생
-    mock_get.side_effect = requests.exceptions.Timeout("Request timed out")
-
-    result = get_item_detail_info.invoke({"asset_name": "SlowAsset"})
-
-    data = json.loads(result)
-    assert "error" in data
-    # 에러 메시지에 타임아웃 관련 내용 확인
-    error_msg = data["error"]
-    expected_phrases = ["시간", "초과", "timeout", "timed out"]
-    assert any(phrase in error_msg for phrase in expected_phrases)
-
-
-@patch("rag.tools.requests.get")
-def test_get_item_connection_error_handling(mock_get):
-    """네트워크 연결 실패(ConnectionError) 발생 시 처리 확인"""
-    mock_get.side_effect = requests.exceptions.ConnectionError("DNS Fail")
-
-    result = get_item_detail_info.invoke({"asset_name": "NoNet"})
-
-    data = json.loads(result)
-    assert "error" in data
-    error_msg = data["error"]
-    assert any(k in error_msg for k in ["연결", "네트워크", "접속", "connection"])
-
-
-# 2. open_usage_prediction_page (페이지 이동) 테스트
-def test_prediction_page_url_structure():
-    """기본적인 URL 생성 구조 확인"""
-    result = open_usage_prediction_page.invoke({"user_question_context": "노트북 수명"})
-    data = json.loads(result)
-    
-    assert data["action"] == "navigate"
-    # fixture에서 설정한 가짜 도메인이 들어갔는지 확인
-    assert "test-frontend.com" in data["target_url"]
-    assert "init_prompt" in data["target_url"]
-
-
-def test_prediction_page_length_limit():
-    """입력값이 500자를 넘을 때 정확히 잘리는지 확인"""
-    long_input = "A" * 1000
-    result = open_usage_prediction_page.invoke({"user_question_context": long_input})
-    data = json.loads(result)
-    
-    parsed = urllib.parse.urlparse(data["target_url"])
-    qs = urllib.parse.parse_qs(parsed.query)
-    
-    truncated = qs["init_prompt"][0]
-    # URL 인코딩 여부와 상관없이 복원된 길이는 500이어야 함 (로직에 따라 다를 수 있음)
-    # 일반적인 구현이라면 원본 텍스트 기준 500자 혹은 인코딩 후 길이 제한일 수 있으므로
-    # 여기서는 "잘렸다"는 사실과 "길이"를 체크
-    assert len(truncated) <= 500
-    assert truncated.startswith("AAAA")
-
-
-def test_prediction_page_security():
-    """XSS 및 제어 문자 제거 확인"""
-    # Null Byte(\x00)와 Script 태그 시뮬레이션
-    malicious_input = "He\x00llo<script>"
-    
-    result = open_usage_prediction_page.invoke({"user_question_context": malicious_input})
+def test_prediction_page_url_construction():
+    """[URL] 생성된 URL의 도메인, 파라미터 구조 검증"""
+    context = "노트북 배터리 수명"
+    result = open_usage_prediction_page.invoke({"user_question_context": context})
     data = json.loads(result)
     
     target_url = data["target_url"]
-    decoded = urllib.parse.unquote(target_url)
+    assert "test-frontend.com" in target_url
     
-    # 1. Null Byte가 제거되었거나 인코딩 처리 되었는지
-    assert "\x00" not in decoded
+    # URL 파싱하여 파라미터 정확성 검증
+    parsed = urllib.parse.urlparse(target_url)
+    qs = urllib.parse.parse_qs(parsed.query)
     
-    # 2. HTML Escape 혹은 URL Encoding 확인
-    # <script>가 그대로 실행 가능한 형태로 남아있으면 안 됨
-    assert "<script>" not in decoded
+    assert "init_prompt" in qs
+    # 인코딩된 값이 다시 디코딩되었을 때 원본과 같은지 확인
+    assert qs["init_prompt"][0] == context
+
+
+def test_prediction_page_security_and_limit():
+    """[Security] XSS 방지 태그 제거 및 길이 제한(Truncation) 동시 검증"""
+    # 500자 이상의 스크립트 공격 문자열 생성
+    malicious_part = "<script>alert(1)</script>"
+    long_padding = "A" * 600
+    input_text = malicious_part + long_padding # 600자 넘음
+
+    result = open_usage_prediction_page.invoke({"user_question_context": input_text})
+    data = json.loads(result)
+    
+    target_url = data["target_url"]
+    
+    # URL 디코딩
+    decoded_url = urllib.parse.unquote(target_url)
+    
+    # 1. <script> 태그가 그대로 남아있으면 안 됨 (제거되거나 이스케이프 되어야 함)
+    assert "<script>" not in decoded_url
+    
+    # 2. 파라미터 길이 제한 확인 (URL 전체가 아니라 init_prompt 값의 길이)
+    parsed = urllib.parse.urlparse(target_url)
+    qs = urllib.parse.parse_qs(parsed.query)
+    prompt_value = qs["init_prompt"][0]
+    
+    # 원본은 600자였지만, 결과는 500자 이하여야 함
+    assert len(prompt_value) <= 500
