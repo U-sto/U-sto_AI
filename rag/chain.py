@@ -87,7 +87,7 @@ def run_rag_chain(
                     if (
                         isinstance(parsed_output, dict)
                         and parsed_output.get("action") == "navigate"
-                        and parsed_output.get("target_url") == "/ai-prediction" # 특정 페이지로 제한
+                        and parsed_output.get("target_url") # target_url 존재 여부만 확인
                     ):
                         logger.info("[Tool Output] 사용주기 AI 예측 페이지 이동 요청 감지 -> 프롬프트 포함하여 반환")
                         return {
@@ -129,14 +129,18 @@ def run_rag_chain(
                 # 최종 답변은 도구가 바인딩되지 않은 순수 'llm'을 사용
                 # 이유: llm_with_tools를 쓰면 결과를 보고 또 도구를 호출하려는 루프에 빠질 수 있음.
                 final_response = llm.invoke(history)
-                
+
+                # [중요] 도구로 답변을 완료했으므로, 함수를 즉시 종료(return)하여 
+                # 아래쪽 RAG 파이프라인이 중복 실행되는 것을 방지합니다.
                 return {
                     "answer": final_response.content,
-                    "attribution": [], # 외부 도구 조회 결과이므로 벡터DB 출처는 없음
+                    "attribution": [], 
+                    "source": "tool_execution" # 출처 명시
                 }
             
             else:
-                # 도구 호출은 있었으나, 유효한 결과(ToolMessage)가 하나도 없는 경우 (실패 또는 무시됨)
+                # 도구 호출은 있었으나 실질적인 결과(ToolMessage)가 없는 경우
+                # 여기서 return 하지 않으므로, 자연스럽게 아래의 RAG 로직으로 흘러갑니다 (Fallback).
                 logger.info("[Tool Fallback] 도구 호출이 있었으나 유효한 결과가 없어 RAG 파이프라인으로 넘어갑니다.")
 
         # 도구 호출이 없는 경우를 명시적으로 처리

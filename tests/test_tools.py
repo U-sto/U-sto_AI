@@ -198,7 +198,7 @@ def test_get_item_json_decode_error(mock_get):
 def test_get_item_timeout_handling(mock_get, mock_synonyms):
     """
     [Review 1 반영] API 요청 시간 초과(Timeout) 발생 시 처리 확인
-    tools.py의 163-168 라인(Timeout 예외 처리)이 제대로 동작하는지 검증
+    tools.py의 156-161 라인(Timeout 예외 처리)이 제대로 동작하는지 검증
     """
     # 1. Mock 설정: 호출 시 즉시 Timeout 예외 발생
     # 실제 5초, 10초를 기다릴 필요 없이 예외 상황만 시뮬레이션합니다.
@@ -220,7 +220,7 @@ def test_get_item_timeout_handling(mock_get, mock_synonyms):
 def test_get_item_connection_error_handling(mock_get, mock_synonyms):
     """
     [Review 2 반영] 네트워크 연결 실패(ConnectionError) 발생 시 처리 확인
-    tools.py의 157-162 라인(ConnectionError 예외 처리)이 제대로 동작하는지 검증
+    tools.py의 165-170 라인(ConnectionError 예외 처리)이 제대로 동작하는지 검증
     """
     # 1. Mock 설정: 인터넷 끊김, DNS 실패 등의 연결 오류 발생
     mock_get.side_effect = requests.exceptions.ConnectionError("Name resolution failed")

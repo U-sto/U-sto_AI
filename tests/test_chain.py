@@ -166,7 +166,7 @@ def test_tool_execution_navigate(mock_nav_tool, mock_dependencies):
     assert isinstance(result, dict)
     assert result.get("action") == "navigate"
     target_url = result.get("target_url")
-    assert isinstance(target_url, str) and target_url.startswith("http://test-frontend")
+    assert isinstance(target_url, str) and target_url.startswith("https://univ-frontend.com/ai-prediction")
 
     # - [중요] 페이지 이동 시에는 최종 답변 생성(Generator) 단계를 건너뛰어야 함
     ctx.base_llm.invoke.assert_not_called()
