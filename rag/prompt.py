@@ -1,5 +1,6 @@
 import textwrap
 import app.config as config
+from rag.faq_service import get_relevant_faq_string
 
 def build_question_classifier_prompt():
     """
@@ -111,6 +112,26 @@ def build_function_decision_prompt():
     """)
 
 
+# FAQ 데이터를 프롬프트에 주입
+def build_faq_prompt(question: str) -> str:
+    """
+    질문과 관련된 FAQ가 있을 경우에만 프롬프트 섹션을 생성합니다.
+    """
+    # 서비스 로직 호출 (키워드 매칭 수행)
+    faq_data = get_relevant_faq_string(question)
+    
+    if not faq_data:
+        return "" 
+
+    return textwrap.dedent(f"""
+    [FAQ 지식 베이스 (관련 내용)]
+    사용자 질문과 연관된 FAQ 내용이 발견되었습니다. 
+    아래 내용을 참고하여 답변하세요.
+
+    {faq_data}
+    """)
+
+
 def assemble_prompt(context: str, question: str) -> str:
     """
     System / Role / Safety / Function 판단 규칙과
@@ -127,6 +148,12 @@ def assemble_prompt(context: str, question: str) -> str:
 
     if config.ENABLE_SAFETY_PROMPT:
         sections.append(build_safety_prompt())
+
+    # FAQ 프롬프트 사용 여부는 다른 ENABLE_* 플래그들과 동일하게 config에서 직접 제어한다.
+    if getattr(config, "ENABLE_FAQ_PROMPT", False):
+        faq_section = build_faq_prompt(question)
+        if faq_section:
+            sections.append(faq_section)
 
     if config.ENABLE_FUNCTION_DECISION_PROMPT:
         sections.append(build_function_decision_prompt())
