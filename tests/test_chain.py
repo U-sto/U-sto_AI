@@ -83,15 +83,12 @@ def test_simple_qa_flow_no_tools(mock_dependencies):
     """
     ctx = mock_dependencies
 
-    # 1. Router 단계 (bound_llm)
-    # tool_calls가 비어있는 응답 -> 도구 사용 안 함
-    # 수정 후 (LangChain 파서가 문자를 읽을 수 있게)
-    ctx.base_llm.return_value = AIMessage(content="안녕하세요") 
-    # 또는 chain.py 내부에서 invoke를 호출하는 대상에 대해
-    ctx.base_llm.invoke.return_value = AIMessage(content="안녕하세요")
+    # 1. Router 단계 (bound_llm) - 첫 번째 AI 호출
+    # 도구를 사용하지 않겠다는 신호(tool_calls=[])를 명확히 줍니다.
+    ctx.bound_llm.invoke.return_value = AIMessage(content="", tool_calls=[])
 
-    # 2. Generator 단계 (base_llm)
-    # 검색된 문서(Context)를 바탕으로 답변 생성
+    # 2. Generator 단계 (base_llm) - 두 번째 AI 호출
+    # RAG 컨텍스트를 바탕으로 최종 답변을 생성합니다.
     expected_answer = "반갑습니다. 무엇을 도와드릴까요?"
     ctx.base_llm.invoke.return_value = AIMessage(content=expected_answer)
 
@@ -158,7 +155,7 @@ def test_tool_execution_navigate(mock_nav_tool, mock_dependencies):
     # 2. 도구(Mock)가 'navigate' 액션 JSON 반환
     mock_nav_tool.invoke.return_value = json.dumps({
         "action": "navigate",
-        "target_url": "http://test.com/predict"
+        "target_url": "https://univ-frontend.com/ai-prediction"
     })
 
     # 3. 실행

@@ -141,7 +141,7 @@ def run_rag_chain(
 
         # 도구 호출이 없는 경우를 명시적으로 처리
         else:
-            logger.warning("[Tool Fallback] 도구 실행 결과가 없음 -> RAG 검색 파이프라인으로 전환하여 답변 시도")
+            logger.warning("[Tool Fallback] 도구 호출 요청 없음 -> RAG 검색 파이프라인으로 전환하여 답변 시도")
 
     except Exception as e:
         # 도구 파이프라인 전체 에러 핸들링
