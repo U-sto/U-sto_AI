@@ -85,7 +85,10 @@ def test_simple_qa_flow_no_tools(mock_dependencies):
 
     # 1. Router 단계 (bound_llm)
     # tool_calls가 비어있는 응답 -> 도구 사용 안 함
-    ctx.bound_llm.invoke.return_value = AIMessage(content="안녕하세요", tool_calls=[])
+    # 수정 후 (LangChain 파서가 문자를 읽을 수 있게)
+    ctx.base_llm.return_value = AIMessage(content="안녕하세요") 
+    # 또는 chain.py 내부에서 invoke를 호출하는 대상에 대해
+    ctx.base_llm.invoke.return_value = AIMessage(content="안녕하세요")
 
     # 2. Generator 단계 (base_llm)
     # 검색된 문서(Context)를 바탕으로 답변 생성
@@ -130,7 +133,7 @@ def test_tool_execution_search(mock_tool_func, mock_dependencies):
     # - 도구가 실행되었으므로 Retriever(검색)는 호출되지 않아야 함 (Smart Logic)
     ctx.retriever.invoke.assert_not_called()
     # - 실제 도구 함수가 올바른 인자로 호출되었는지 확인
-    mock_tool_func.invoke.assert_called_with({"asset_name": "맥북"})
+    mock_tool_func.assert_called_with({"asset_name": "맥북"})
     # - 최종 답변 확인
     assert result["answer"] == "맥북 재고가 있습니다."
 
