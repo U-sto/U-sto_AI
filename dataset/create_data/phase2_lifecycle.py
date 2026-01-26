@@ -3,6 +3,9 @@ import pandas as pd
 import numpy as np
 import random
 from datetime import datetime, timedelta
+from faker import Faker
+
+fake = Faker('ko_KR') 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data_lifecycle") # create_data/data_lifecycle
@@ -36,9 +39,12 @@ PROB_RETURN_OVER_5Y = 0.6
 REASONS_RETURN = ['사용연한경과', '고장/파손', '불용결정', '사업종료', '잉여물품']
 PROBS_RETURN_REASON = [0.4, 0.2, 0.2, 0.1, 0.1]
 
-# 승인 상태 확률 (확정, 대기, 반려) - 공통
+# 승인 상태 (확정, 대기, 반려)
 STATUS_CHOICES = ['확정', '대기', '반려']
-PROBS_STATUS_RETURN = [0.90, 0.095, 0.005]
+# 최근 대기 상태 몰림 기준일
+RECENT_WAIT_START = datetime(2024, 10, 1)  # 2024-10 이후
+# 각 단계별 승인 상태 확률
+PROBS_STATUS_RETURN = [0.85, 0.1, 0.05] 
 PROBS_STATUS_DISUSE = [0.70, 0.25, 0.05]
 PROBS_STATUS_DISPOSAL = [0.90, 0.08, 0.02]
 
@@ -85,7 +91,6 @@ df_operation['물품고유번호'] = create_asset_ids(df_operation)
 # 시뮬레이션 편의상 확정된 건은 '운용' 또는 '취득'으로 시작
 # 매뉴얼상: 취득 -> 운용 -> 반납 -> 불용
 df_operation['운용상태'] = '취득' # 초기값
-
 # ---------------------------------------------------------
 # 2. 생애주기 시뮬레이션 (Lifecycle)
 # ---------------------------------------------------------
@@ -200,14 +205,22 @@ for row in df_operation.itertuples():
             elif return_reason == '잉여물품': item_condition = '신품' # 잉여물품은 주로 신품/상태좋음
             else: item_condition = '중고품'
 
-            # 반납 승인 절차 (90:9.5:0.5)
+            # 반납 승인 절차 (85:10:5)
             return_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_RETURN)
             
-            # 반납 확정일자 : 확정일 때만 생성 (신청일 + 1~7일)
+            # [추가] 대기 상태면 반납일자를 최근으로 재설정
+            if return_status == '대기':
+                # 최근 구간에서 반납 신청일자 재생성
+                 # 단, 기존 return_date / clear_date + 365일 / RECENT_WAIT_START 중 가장 늦은 날짜보다 과거로 가지 않도록 제한
+                min_allowed_date = max(return_date, clear_date + timedelta(days=365), RECENT_WAIT_START)
+                recent_wait_date = fake.date_between(start_date=min_allowed_date.date(), end_date=today.date())
+                return_date = datetime(recent_wait_date.year, recent_wait_date.month, recent_wait_date.day)
+
+            # 반납 확정일자 : 확정일 때만 생성 (신청일 + 3일 ~ 2주)
             return_confirm_date_str = '' 
 
             if return_status == '확정':
-                random_days = random.randint(1, 7)
+                random_days = random.randint(3, 14)
                 return_confirm_date = (return_date + timedelta(days=random_days))
 
                 if return_confirm_date > today:
@@ -233,7 +246,6 @@ for row in df_operation.itertuples():
             return_row = {
                 # ---------------반납등록목록-----------------
                 '반납일자': return_date.strftime('%Y-%m-%d'),
-                '등록일자': return_date.strftime('%Y-%m-%d'), # 등록일자 = 반납신청일
                 '반납확정일자': return_confirm_date_str,
                 '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
                 '승인상태': return_status,
@@ -289,18 +301,29 @@ for row in df_operation.itertuples():
                 else: # 불용결정 등
                     disuse_reason = '구형화'
                 
-            disuse_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_DISUSE)
-                
-            # 불용일자(=등록일자)와 확정일자 계산 로직 분리
+            disuse_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_DISUSE) # 승인 상태 결정
+            
+            # [추가] 대기 상태면 불용일자를 최근으로 재설정
+            if disuse_status == '대기':
+                 # 대기 상태 시 불용일자 재생성 범위를 disuse_base_date(=return_confirm_date) 이후로 제한
+                start_for_wait = max(disuse_base_date, RECENT_WAIT_START)
+                # start_date가 today보다 클 수 있는 경우를 방지
+                if start_for_wait > today:
+                    start_for_wait = today
+        
+                temp_date = fake.date_between(start_date=start_for_wait, end_date=today)
+                disuse_date = datetime(temp_date.year, temp_date.month, temp_date.day)
 
-            # 1. 불용일자(등록일자): 승인 상태와 무관하게 신청 날짜로 고정
+            # 불용일자와 확정일자 계산 로직 분리
+
+            # 1. 불용일자: 위에서 결정된 신청일(disuse_date)을 사용
             disuse_date_str = disuse_date.strftime('%Y-%m-%d')
             
-            # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 1~7일)
+            # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 2주~1개월)
             disuse_confirm_date_str = '' 
 
             if disuse_status == '확정':
-                random_days = random.randint(1, 7)  
+                random_days = random.randint(14, 30)  
                 disuse_confirm_date = disuse_date + timedelta(days=random_days)  
                 if disuse_confirm_date > today:
                     disuse_confirm_date = today
@@ -311,7 +334,6 @@ for row in df_operation.itertuples():
             disuse_row = {
                 # ---------------불용등록목록-----------------
                 '불용일자': disuse_date_str,
-                '등록일자': disuse_date_str,
                 '불용확정일자': disuse_confirm_date_str,
                 '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1], # 관리자가 보통 처리
                 '승인상태': disuse_status,
@@ -341,7 +363,7 @@ for row in df_operation.itertuples():
 
     # -------------------------------------------------------
     # 2-4. 처분 시뮬레이션 (불용 -> 처분)
-    # 조건: 불용 확정된 물품은 무조건 처분 (매각/폐기)
+    # 조건: 불용 확정된 물품은 무조건 처분 (매각/폐기), but 승인 상태에 따라 처분 시점 차이
     # -------------------------------------------------------
     if is_disused and disuse_confirm_date is not None:
         disposal_base_date = disuse_confirm_date
@@ -365,12 +387,20 @@ for row in df_operation.itertuples():
 
             # 처분 승인 상태 비율 설정 (확정 90%, 대기 8%, 반려 2%)
             disposal_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_DISPOSAL)
-            
+
+            # [추가] 대기 상태면 처분일자를 최근으로 재설정
+            if disposal_status == '대기':
+                # 대기 상태 재생성 시, 처분일자가 불용확정일자(disposal_base_date)보다
+                # 앞서지 않도록 start_date를 max(disposal_base_date, RECENT_WAIT_START)로 제한
+                start_date_for_wait = max(disposal_base_date, RECENT_WAIT_START)
+                temp_date = fake.date_between(start_date=start_date_for_wait, end_date=today)
+                disposal_date = datetime(temp_date.year, temp_date.month, temp_date.day)
+
             # 처분확정일자 생성 로직
             disposal_confirm_date_str = ''
             if disposal_status == '확정':
-                # 신청일로부터 3~7일 후 확정
-                disposal_confirm_date = disposal_date + timedelta(days=random.randint(3, 7))
+                # 신청일로부터 1~3개월 후 확정
+                disposal_confirm_date = disposal_date + timedelta(days=random.randint(30, 90))
                 if disposal_confirm_date > today: 
                     disposal_confirm_date = today # 미래 날짜 방지
                 disposal_confirm_date_str = disposal_confirm_date.strftime('%Y-%m-%d')
@@ -378,7 +408,6 @@ for row in df_operation.itertuples():
             disposal_row = {
                 # ---------------처분목록-----------------
                 '처분일자': disposal_date.strftime('%Y-%m-%d'),
-                '등록일자': disposal_date.strftime('%Y-%m-%d'),
                 '처분정리구분': disposal_method,
                 '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
                 '승인상태': disposal_status,

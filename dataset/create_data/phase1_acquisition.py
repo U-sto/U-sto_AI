@@ -15,8 +15,8 @@ os.makedirs(SAVE_DIR, exist_ok=True) # 폴더가 없으면 생성
 fake = Faker('ko_KR')  # 한국어 더미 데이터 생성기
 TOTAL_COUNT = 5000     # 생성할 데이터 개수 (약 5000건)
 
-# 승인 상태 비율 설정 (확정 89%, 대기 10%, 반려 1%)
-APPROVAL_RATIOS = [0.89, 0.10, 0.01]
+# 승인 상태 비율 설정 (확정 97%, 대기 2%, 반려 1%)
+APPROVAL_RATIOS = [0.97, 0.02, 0.01]
 APPROVAL_STATUSES = ['확정', '대기', '반려']
 REMARK_TEMPLATES_BY_CLASS = {
     # IT / 전산 장비
@@ -217,18 +217,12 @@ for i in range(TOTAL_COUNT):
     acq_date = datetime(temp_date.year, temp_date.month, temp_date.day)
 
     # 4) 정리일자 생성
-    # 확정: 취득일 + (1일~7일) 혹은 (1달~2달)
+    # 확정: 취득일 + (3일 ~2주)
     # 대기/반려: NULL (None)
     clear_date = None
     if approval_status == '확정':
-        delay_type = random.choice(['short', 'long'])
-        if delay_type == 'short':
-            days_add = random.randint(1, 7)
-        else:
-            days_add = random.randint(30, 60)
-        # datetime + timedelta = datetime (안전함)  
-        clear_date = acq_date + timedelta(days=days_add)
-
+        random_days = random.randint(3, 14)
+        clear_date = (acq_date + timedelta(days=random_days))
         # 정리일자는 현재 날짜를 초과하지 않도록 제한
         if clear_date > today:
             clear_date = today
