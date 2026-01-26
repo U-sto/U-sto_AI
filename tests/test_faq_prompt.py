@@ -97,11 +97,15 @@ class TestFAQPromptLogic(unittest.TestCase):
         res_no_match = get_relevant_faq_string("이건 엉뚱한 질문이야")
         self.assertEqual(res_no_match, "")
 
-        # 3. 목록 요청
+        # 3. 목록 요청 (사용자님의 최신 로직: 질문+답변 쌍 전체 출력)
         res_list = get_relevant_faq_string("FAQ 보여줘")
-        self.assertIn("[FAQ 전체 질문 목록]", res_list)
-        self.assertIn("- Q1", res_list)
-        self.assertNotIn("A1", res_list) # 답변은 없어야 함
+        
+        # 헤더 문구 확인 (내용 목록으로 수정됨)
+        self.assertIn("[FAQ 전체 내용 목록]", res_list)
+        
+        # 질문과 답변이 쌍으로 잘 들어있는지 확인
+        self.assertIn("Q: Q1", res_list)
+        self.assertIn("A: A1", res_list)
 
 
     @patch('rag.faq_service._ensure_faq_loaded') # [추가] 실제 로드 로직 실행 방지 (No-op)
