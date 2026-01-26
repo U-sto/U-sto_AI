@@ -2,8 +2,8 @@ import pytest
 import json
 import urllib.parse
 import requests
+import rag.tools
 from unittest.mock import patch, MagicMock
-import os
 
 # 모듈 임포트
 from rag import dictionaries
@@ -15,17 +15,14 @@ from rag.tools import get_item_detail_info, open_usage_prediction_page
 
 @pytest.fixture(autouse=True)
 def _set_test_env(monkeypatch):
-    """
-    모든 테스트 실행 전 환경변수 주입 (URL, Timeout 등).
-    시스템 환경변수에 의존하지 않는 독립적인 테스트 환경을 보장합니다.
-    """
-    envs = {
-        "BACKEND_API_URL": "http://test-backend.com",
-        "FRONTEND_BASE_URL": "http://test-frontend.com",
-        "API_REQUEST_TIMEOUT": "3.0"
-    }
-    for key, value in envs.items():
-        monkeypatch.setenv(key, value)
+    # 1. os.environ 설정 (혹시 함수 내부에서 os.environ을 쓰는 경우 대비)
+    monkeypatch.setenv("BACKEND_API_URL", "http://test-backend.com")
+    
+    # 2. [핵심] 이미 로딩된 모듈의 전역 변수를 직접 덮어쓰기 (setattr 사용)
+    # 주의: rag/tools.py 안에 실제 변수명이 BACKEND_API_URL이어야 함
+    monkeypatch.setattr(rag.tools, "BACKEND_API_URL", "http://test-backend.com")
+    monkeypatch.setattr(rag.tools, "FRONTEND_BASE_URL", "http://test-frontend.com")
+    monkeypatch.setattr(rag.tools, "API_REQUEST_TIMEOUT", "3.0")
 
 @pytest.fixture
 def mock_synonyms():

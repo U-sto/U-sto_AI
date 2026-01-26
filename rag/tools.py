@@ -136,35 +136,34 @@ def get_item_detail_info(
         response = requests.get(api_url, params=params, timeout=API_REQUEST_TIMEOUT)
         response.raise_for_status()
         
-        data = response.json()
-        
-        if not data.get("results"):
-            msg = "조건에 맞는 물품을 찾을 수 없습니다."
-            if asset_name and asset_name != target_search_name:
-                msg += f" (참고: '{asset_name}' -> '{target_search_name}' 변환 검색)"
-            return json.dumps({"message": msg}, ensure_ascii=False)
-
-        return json.dumps(data, ensure_ascii=False)
-
-    except json.JSONDecodeError as e:
-        # JSON 디코딩 실패 시 응답 일부를 함께 로깅/반환하여 디버깅에 도움을 줍니다.
-        response_preview = ""
+       # JSON 파싱과 이후 로직은 별도의 try 구문으로 감싸 JSONDecodeError만을 명확히 처리합니다.
         try:
-            if isinstance(getattr(e, "doc", None), str):
-                response_preview = e.doc[:100]
-        except Exception:
-            # 예외 객체에서 doc를 읽는 과정에서의 추가 오류는 무시
+            data = response.json()
+            if not data.get("results"):
+                msg = "조건에 맞는 물품을 찾을 수 없습니다."
+                if asset_name and asset_name != target_search_name:
+                    msg += f" (참고: '{asset_name}' -> '{target_search_name}' 변환 검색)"
+                return json.dumps({"message": msg}, ensure_ascii=False)
+            return json.dumps(data, ensure_ascii=False)
+        except json.JSONDecodeError as e:
+            # JSON 디코딩 실패 시 응답 일부를 함께 로깅/반환하여 디버깅에 도움을 줍니다.
             response_preview = ""
-        logger.error(
-            "API 응답 JSON 파싱 실패 (위치: %s, 응답 일부: %r)",
-            getattr(e, "pos", None),
-            response_preview,
-            exc_info=True,
-        )
-        error_message = "서버 응답 형식이 올바르지 않습니다."
-        if response_preview:
-            error_message += f" (응답 일부: {response_preview!r})"
-        return json.dumps({"error": error_message}, ensure_ascii=False)
+            try:
+                if isinstance(getattr(e, "doc", None), str):
+                    response_preview = e.doc[:100]
+            except Exception:
+                # 예외 객체에서 doc를 읽는 과정에서의 추가 오류는 무시
+                response_preview = ""
+            logger.error(
+                "API 응답 JSON 파싱 실패 (위치: %s, 응답 일부: %r)",
+                getattr(e, "pos", None),
+                response_preview,
+                exc_info=True,
+            )
+            error_message = "서버 응답 형식이 올바르지 않습니다."
+            if response_preview:
+                error_message += f" (응답 일부: {response_preview!r})"
+            return json.dumps({"error": error_message}, ensure_ascii=False)
 
     # 에러 핸들링 (구체적 -> 포괄적 순서 유지)
     except requests.exceptions.Timeout as e:
@@ -200,21 +199,12 @@ def open_usage_prediction_page(user_question_context: str) -> str:
         cleaned_context = str(user_question_context).strip()
         cleaned_context = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned_context)
         
-        # HTML Escape
-        cleaned_context = html.escape(cleaned_context)
-        
         # 길이 제한 및 로그
         if len(cleaned_context) > MAX_CONTEXT_LENGTH:
             logger.warning(
                 f"[Input Truncation] 입력값 길이({len(cleaned_context)})가 제한을 초과하여 잘렸습니다."
             )
             cleaned_context = cleaned_context[:MAX_CONTEXT_LENGTH]
-            
-            # 잘린 엔티티 처리
-            last_amp = cleaned_context.rfind('&')
-            last_semi = cleaned_context.rfind(';')
-            if last_amp > last_semi:
-                cleaned_context = cleaned_context[:last_amp]
         
         if cleaned_context:
             params['init_prompt'] = cleaned_context
