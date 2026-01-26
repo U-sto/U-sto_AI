@@ -34,7 +34,13 @@ def run_rag_chain(
         tools = [get_item_detail_info, open_usage_prediction_page]
         
         # 도구 이름으로 객체를 빠르게 찾기 위한 매핑 (Look-up Optimization)
-        tool_map = {tool.name: tool for tool in tools}
+        tool_map = {}
+        for tool in tools:
+            tool_name = tool.name
+            if tool_name in tool_map:
+                logger.error(f"[Tool Registration Error] Duplicate tool name detected: {tool_name}")
+                raise ValueError(f"Duplicate tool name detected: {tool_name}")
+            tool_map[tool_name] = tool
         
         # LLM에 도구 바인딩 (이 LLM은 도구를 '호출'할 수 있는 상태)
         llm_with_tools = llm.bind_tools(tools)

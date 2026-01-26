@@ -30,8 +30,8 @@ def mock_synonyms():
         "테스트용가짜": "진짜키워드",
         "멍멍이": "강아지"
     }
-    # clear=False: 기존 데이터 유지하면서 fake_data만 덮어쓰기/추가
-    with patch.dict(dictionaries.KEYWORD_SYNONYMS, fake_data, clear=False):
+    # clear=True: 기존 데이터를 싹 비우고, 오직 fake_data만 남김 (깔끔함)
+    with patch.dict(dictionaries.KEYWORD_SYNONYMS, fake_data, clear=True):
         yield
 
 
@@ -213,7 +213,12 @@ def test_get_item_timeout_handling(mock_get, mock_synonyms):
     
     # 에러 메시지에 '시간', '초과', 'timeout' 등 관련 키워드가 포함되어 있는지 확인
     error_msg = data["error"]
-    assert any(keyword in error_msg for keyword in ["시간", "초과", "지연", "timeout"])
+    # 실제 tools.py에서 발생하는 정확한 문구("요청 시간이 초과되었습니다")를 우선 검증
+    # 영문 에러(timeout)도 함께 방어적으로 검사
+    expected_phrases = ["요청 시간이 초과되었습니다", "timeout", "timed out"]
+    
+    assert any(phrase in error_msg for phrase in expected_phrases), \
+        f"타임아웃 관련 에러 메시지가 아닙니다. 실제 메시지: {error_msg}"
 
 
 @patch("rag.tools.requests.get")
@@ -270,14 +275,14 @@ def test_prediction_page_broken_entity_trimming():
     예: '...&amp' 처럼 끝나면 브라우저가 깨지므로 아예 제거해야 함
     """
     # 상황 설정:
-    # 495글자 + '&' (1글자) = 496글자 (입력)
-    # Escape 후: 495글자 + '&amp;' (5글자) = 500글자 (딱 맞음) -> 정상
-    # Escape 후: 496글자 + '&amp;' = 501글자 -> 500자에서 잘리면 '&amp'가 됨 (불완전)
+    # 496글자 + '&' (1글자) = 497글자 (입력)
+    # Escape 후: "A"*496 + "&amp;" (5글자) = 총 501글자
+    # 500자 제한으로 잘리면: "A"*496 + "&amp" (마지막 ';'이 탈락된 불완전 엔티티)
     
     prefix = "A" * 496
     problematic_input = prefix + "&" 
     # escape 되면: "A"*496 + "&amp;" (총 길이 501)
-    # 잘리면: "A"*496 + "&amp" (마지막 ; 가 탈락됨)
+    # 잘리면: "A"*496 + "&amp" (마지막 ';' 이 탈락됨)
     
     result = open_usage_prediction_page.invoke({"user_question_context": problematic_input})
     data = json.loads(result)
