@@ -68,37 +68,10 @@ if set(group_cols_op).issubset(df_op.columns):
 else:
     print("   ⚠️ 경고: 04_01 파일에 필요한 컬럼이 부족합니다. Phase 2 코드를 확인하세요.")
 
-# [04-03] 물품 반납 관리
-# 1) 상단 그리드: 반납 등록 목록 (신청 건 위주)
-#    (실제론 Request ID로 묶여야 하지만, 여기선 개별 행을 신청 건으로 간주)
-view_rt_reg = df_rt[['반납일자', '반납확정일자', '등록자ID', '등록자명', '승인상태']]
-view_rt_reg.to_csv(os.path.join(SAVE_DIR, 'View_04_03_반납등록목록.csv'), index=False, encoding='utf-8-sig')
-
-# 2) 하단 그리드: 반납 물품 목록 (상세)
-view_rt_item = df_rt[['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '운용부서', '물품상태', '사유']]
-view_rt_item.to_csv(os.path.join(SAVE_DIR, 'View_04_03_반납물품목록.csv'), index=False, encoding='utf-8-sig')
-
-
-# [05-01] 물품 불용 관리
-# 1) 상단 그리드: 불용 등록 목록
-view_du_reg = df_du[['불용일자', '불용확정일자', '등록자ID', '등록자명', '승인상태']]
-view_du_reg.to_csv(os.path.join(SAVE_DIR, 'View_05_01_불용등록목록.csv'), index=False, encoding='utf-8-sig')
-
-# 2) 하단 그리드: 불용 물품 목록
-view_du_item = df_du[['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '운용부서', '물품상태', '사유']]
-view_du_item.to_csv(os.path.join(SAVE_DIR, 'View_05_01_불용물품목록.csv'), index=False, encoding='utf-8-sig')
-
-
 # [06-01] 물품 처분 관리
-# 1) 상단 그리드: 처분 목록
-view_dp_reg = df_dp[['처분일자', '처분정리구분', '등록자ID', '등록자명', '승인상태']]
-view_dp_reg.to_csv(os.path.join(SAVE_DIR, 'View_06_01_처분목록.csv'), index=False, encoding='utf-8-sig')
-
-# 2) 하단 그리드: 처분 물품 목록
-# 요청하신 '정리일자', '불용일자', '내용연수' 포함
-view_dp_item = df_dp[['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', 
-                      '처분방식', '물품상태', '사유', '정리일자', '불용일자', '내용연수']]
-view_dp_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_처분물품목록.csv'), index=False, encoding='utf-8-sig')
+# 불용 물품 목록
+view_du_item = df_du[['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '정리일자', '불용일자','물품상태','내용연수']]
+view_du_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_불용물품목록.csv'), index=False, encoding='utf-8-sig')
 
 
 # [07-01] 보유 현황 조회 (Aggregation)
@@ -119,7 +92,7 @@ df_hist['유효종료일자'] = df_hist['유효종료일자'].fillna(CURRENT_STA
 
 # 3. 속성 정보 결합 (운용대장에서 변하지 않는 정보들)
 static_cols = [
-    '물품고유번호', 'G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '정리일자', 
+    'G2B_목록번호', 'G2B_목록명','물품고유번호', '취득일자', '취득금액', '정리일자', 
     '내용연수', '승인상태', '취득정리구분', '운용부서코드', '비고'
 ]
 df_static = df_op[static_cols].drop_duplicates(subset=['물품고유번호'])
@@ -240,7 +213,5 @@ else:
 
 print("\n🎉 모든 작업이 완료되었습니다.")
 print("   생성된 파일 목록:")
-print("   - View_04_03_반납등록목록.csv / View_04_03_반납물품목록.csv")
-print("   - View_05_01_불용등록목록.csv / View_05_01_불용물품목록.csv")
-print("   - View_06_01_처분목록.csv / View_06_01_처분물품목록.csv")
+print("   - View_06_01_불용물품등록.csv")
 print("   - View_07_01_보유현황_이력기반.csv")

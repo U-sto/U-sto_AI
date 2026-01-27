@@ -252,7 +252,7 @@ for row in df_operation.itertuples():
                 # 물품 정보
                 # ---------------반납물품목록-----------------
                 'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
-                '물품고유번호': asset_id, '취득일자': row.취득일자, '취득금액': total_amount,
+                '물품고유번호': asset_id, '취득일자': row.취득일자,'취득금액': total_amount,
                 '정리일자': clear_date_str, # 취득 시 정리일자  
                 '운용부서': dept_name, '운용상태': df_operation.at[idx, '운용상태'], '물품상태': item_condition, '사유': return_reason
             }
@@ -406,20 +406,16 @@ for row in df_operation.itertuples():
                 disposal_confirm_date_str = disposal_confirm_date.strftime('%Y-%m-%d')
 
             disposal_row = {
-                # ---------------처분목록-----------------
+                # ---------------처분등록목록-----------------
                 '처분일자': disposal_date.strftime('%Y-%m-%d'),
+                '처분확정일자': disposal_confirm_date_str,
                 '처분정리구분': disposal_method,
                 '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
                 '승인상태': disposal_status,
                 # ---------------처분물품목록-----------------
                 'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
                 '물품고유번호': asset_id, '취득일자': row.취득일자, '취득금액': total_amount,
-                '처분방식': disposal_method, '물품상태': disuse_row['물품상태'], '사유': disuse_row['사유'],
-                # ---------------처분등록정보-----------------
-                '불용일자': disuse_row['불용확정일자'],  # 불용승인확정일과 동일
-                '내용연수': life_years,    
-                '처분확정일자': disposal_confirm_date_str,
-                '정리일자': clear_date_str # 취득 시 정리일자     
+                '처분방식': disposal_method, '물품상태': disuse_row['물품상태'], '사유': disuse_row['사유'],    
             }
 
             disposal_list.append(disposal_row)
