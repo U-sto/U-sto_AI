@@ -70,7 +70,7 @@ else:
 
 # [06-01] 물품 처분 관리
 # 불용 물품 목록
-view_du_item = df_du[['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '정리일자', '불용일자','물품상태']]
+view_du_item = df_du[['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '정리일자', '불용일자','물품상태','내용연수']]
 view_du_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_불용물품목록.csv'), index=False, encoding='utf-8-sig')
 
 
@@ -92,7 +92,7 @@ df_hist['유효종료일자'] = df_hist['유효종료일자'].fillna(CURRENT_STA
 
 # 3. 속성 정보 결합 (운용대장에서 변하지 않는 정보들)
 static_cols = [
-    '물품고유번호', 'G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '정리일자', 
+    'G2B_목록번호', 'G2B_목록명','물품고유번호', '취득일자', '취득금액', '정리일자', 
     '내용연수', '승인상태', '취득정리구분', '운용부서코드', '비고'
 ]
 df_static = df_op[static_cols].drop_duplicates(subset=['물품고유번호'])
