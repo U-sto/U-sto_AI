@@ -218,13 +218,17 @@ def build_qa_generation_prompt() -> str:
 
 
 # Function Calling(Tools) 전용 프롬프트
+
+# KST 타임존 객체는 변하지 않으므로 전역 상수로 한 번만 생성 (메모리 절약 & 속도 향상)
+KST = timezone(timedelta(hours=9))
+
 def build_tool_aware_system_prompt():
     """
     도구(Tools) 사용이 가능한 AI의 **도구 선택/사용 가이드용** 시스템 프롬프트 조각입니다.
     이 프롬프트는 전체 시스템 프롬프트가 아니라, build_role_prompt에서 생성하는 페르소나/역할 프롬프트와 결합되어 사용되는 '도구 선택 로직' 부분만을 담당합니다.
     """
     # 현재 날짜 정보 (수명 계산 등을 위해 필요할 수 있음)
-    current_date = datetime.now(timezone(timedelta(hours=9))).strftime("%Y년 %m월 %d일")
+    current_date = datetime.now(KST).strftime("%Y년 %m월 %d일")
 
     return textwrap.dedent(f"""
     [시스템 설정: 도구(Tools) 사용 및 판단 가이드]

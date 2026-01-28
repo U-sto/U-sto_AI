@@ -5,7 +5,6 @@ import urllib.parse
 import requests
 import re
 from typing import Optional, Tuple
-from rag import dictionaries
 
 from dotenv import load_dotenv
 from langchain_core.tools import tool
@@ -18,9 +17,16 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # 필수 환경변수 로드
-BACKEND_API_URL = os.getenv("BACKEND_API_URL")
-FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL")
-API_REQUEST_TIMEOUT = float(os.getenv("API_REQUEST_TIMEOUT", 5))
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
+BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
+
+# API 요청 타임아웃 (실수형 변환 필요, .env에 적힌 10을 기본값으로 반영)
+try:
+    API_REQUEST_TIMEOUT = float(os.getenv("API_REQUEST_TIMEOUT", 10))
+except ValueError:
+    # 혹시라도 숫자가 아닌 이상한 값이 들어오면 10초로 강제 설정
+    API_REQUEST_TIMEOUT = 10.0
+    logger.warning("API_REQUEST_TIMEOUT 환경변수가 숫자가 아닙니다. 기본값 10초를 사용합니다.")
 
 # 필수 환경변수 검증
 missing_vars = []
@@ -34,7 +40,7 @@ if missing_vars:
 
 
 # [최적화] 동의어 조회용 해시 테이블 (O(1))
-_SYNONYM_LOOKUP = {k.lower(): v for k, v in dictionaries.KEYWORD_SYNONYMS.items()}
+_SYNONYM_LOOKUP = {k.lower(): v for k, v in KEYWORD_SYNONYMS.items()}
 
 
 def _get_normalized_keyword(input_str: str) -> Optional[str]:
@@ -111,8 +117,9 @@ def get_item_detail_info(
     # 4. 검색어 표준화 (Synonym -> Standard)
     target_search_name = asset_name
     if asset_name:
-        # 딕셔너리(KEYWORD_SYNONYMS)를 이용해 표준명으로 변환
-        standard_name = KEYWORD_SYNONYMS.get(asset_name, asset_name) 
+        # 소문자 키 기반의 _SYNONYM_LOOKUP 해시 테이블을 이용해 표준명으로 변환
+        lookup_key = asset_name.lower()
+        standard_name = _SYNONYM_LOOKUP.get(lookup_key, asset_name)
         if standard_name != asset_name:
             target_search_name = standard_name
             logger.info(f"[Synonym Match] '{asset_name}' -> '{target_search_name}'")

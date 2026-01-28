@@ -27,14 +27,23 @@ def _set_test_env(monkeypatch):
 def mock_synonyms():
     """
     동의어 사전 Mocking.
-    실제 dictionaries.py 파일의 내용과 상관없이 테스트용 데이터를 강제 주입합니다.
+    원본 데이터뿐만 아니라, 모듈 로딩 시 생성된 파생 테이블(_SYNONYM_LOOKUP)까지
+    함께 강제로 교체하여 테스트가 반영되도록 함.
     """
     fake_data = {
         "테스트용가짜": "진짜키워드",
         "멍멍이": "강아지",
         "kwd": "keyword"
     }
-    with patch.dict(dictionaries.KEYWORD_SYNONYMS, fake_data, clear=True):
+    
+    # 1. 실제 로직이 사용하는 형태(소문자 키)로 변환된 룩업 테이블을 직접 생성
+    # (tools.py 내부 로직과 동일하게 키를 소문자로 변환)
+    fake_lookup = {key.lower(): value for key, value in fake_data.items()}
+
+    # 2. 원본 딕셔너리와, 실제 조회가 일어나는 룩업 테이블을 '동시에' 패치
+    # 주의: 'rag.tools._SYNONYM_LOOKUP' 경로는 실제 프로젝트 구조에 맞춰 수정 필요
+    with patch.dict(dictionaries.KEYWORD_SYNONYMS, fake_data, clear=True), \
+         patch.dict('rag.tools._SYNONYM_LOOKUP', fake_lookup, clear=True):
         yield
 
 # --------------------------------------------------------------------------

@@ -158,8 +158,7 @@ def run_rag_chain(
                 # RAG를 타지 않고 여기서 함수 종료
                 return {
                     "answer": final_response.content,
-                    "attribution": [], 
-                    "source": "tool_execution"
+                    "attribution": []
                 }
             
             else:

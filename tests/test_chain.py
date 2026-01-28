@@ -70,15 +70,21 @@ def mock_dependencies():
 # [수정 포인트] 모든 테스트에서 앞단 체인(Classifier, Refiner)을 Mocking 하여
 # 실제 로직이나 외부 API 호출 없이 오직 'Router'와 'Tool' 로직만 검증하도록 격리함.
 
-@patch("rag.chain.query_refinement_chain")
-@patch("rag.chain.question_classifier_chain")
-def test_simple_qa_flow_no_tools(mock_classifier, mock_refiner, mock_dependencies):
+@patch("rag.chain.PromptTemplate")
+def test_simple_qa_flow_no_tools(mock_prompt_template, mock_dependencies):
     """[Scenario] 도구 호출 없음 -> RAG 검색 파이프라인 실행"""
     ctx = mock_dependencies
-
-    # 1. 사전 단계 Mock (통과만 되도록 설정)
-    mock_classifier.invoke.return_value = {"category": "general"}
-    mock_refiner.invoke.return_value = "안녕"
+    # 1. 사전 단계 Mock (Classifier, Refiner 체인을 PromptTemplate 레벨에서 Mock)
+    mock_classifier_chain = MagicMock(name="classifier_chain")
+    mock_refiner_chain = MagicMock(name="refiner_chain")
+    mock_classifier_chain.invoke.return_value = {"category": "general"}
+    mock_refiner_chain.invoke.return_value = "안녕"
+    # run_rag_chain 내부에서 PromptTemplate.from_template(...)가
+    # 분류기, 정제기 순으로 두 번 호출된다고 가정하고 각각의 체인 Mock을 반환
+    mock_prompt_template.from_template.side_effect = [
+        mock_classifier_chain,
+        mock_refiner_chain,
+    ]
 
     # 2. Router: 도구 사용 안 함 (Tool Calls 비어있음)
     ctx.bound_llm.invoke.return_value = AIMessage(content="", tool_calls=[])

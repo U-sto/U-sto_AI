@@ -229,25 +229,25 @@ KEYWORD_SYNONYMS = {
 # ---------------------------------------------------------
 PREDICTION_METADATA = {
     # IT 기기
-    "노트북컴퓨터": {"code": "43211503", "lifespan": 6, "predictable": True},
-    "데스크톱컴퓨터": {"code": "43211507", "lifespan": 5, "predictable": True},
-    "액정모니터": {"code": "43211902", "lifespan": 5, "predictable": True},
-    "허브": {"code": "43222610", "lifespan": 5, "predictable": True},
-    "포인터": {"code": "45111601", "lifespan": 5, "predictable": True},
-    "하드디스크드라이브": {"code": "43201803", "lifespan": 6, "predictable": True},
-    "라우터": {"code": "43222609", "lifespan": 6, "predictable": True},
-    "플래시메모리저장장치": {"code": "43202005", "lifespan": 4, "predictable": True},
-    "스캐너": {"code": "43211711", "lifespan": 6, "predictable": True},
-    "종이절단기": {"code": "44101601", "lifespan": 8, "predictable": True},
+    "노트북컴퓨터": {"code": "43211503", "lifespan": 6},
+    "데스크톱컴퓨터": {"code": "43211507", "lifespan": 5},
+    "액정모니터": {"code": "43211902", "lifespan": 5},
+    "허브": {"code": "43222610", "lifespan": 5},
+    "포인터": {"code": "45111601", "lifespan": 5},
+    "하드디스크드라이브": {"code": "43201803", "lifespan": 6},
+    "라우터": {"code": "43222609", "lifespan": 6},
+    "플래시메모리저장장치": {"code": "43202005", "lifespan": 4},
+    "스캐너": {"code": "43211711", "lifespan": 6},
+    "종이절단기": {"code": "44101601", "lifespan": 8},
 
     # 가구 및 수납
-    "책상": {"code": "56101703", "lifespan": 10, "predictable": True},
-    "작업용의자": {"code": "56112102", "lifespan": 10, "predictable": True},
-    "책걸상": {"code": "56112108", "lifespan": 10, "predictable": True},
-    "서랍형수납장": {"code": "56101597", "lifespan": 10, "predictable": True},
+    "책상": {"code": "56101703", "lifespan": 10},
+    "작업용의자": {"code": "56112102", "lifespan": 10},
+    "책걸상": {"code": "56112108", "lifespan": 10},
+    "서랍형수납장": {"code": "56101597", "lifespan": 10},
 
     # 교육용/기타
-    "칠판보조장": {"code": "56121798", "lifespan": 10, "predictable": True},
-    "인터랙티브화이트보드": {"code": "44111911", "lifespan": 7, "predictable": True},
-    "레이저프린터": {"code": "43212105", "lifespan": 5, "predictable": True},
+    "칠판보조장": {"code": "56121798", "lifespan": 10},
+    "인터랙티브화이트보드": {"code": "44111911", "lifespan": 7},
+    "레이저프린터": {"code": "43212105", "lifespan": 5},
 }
