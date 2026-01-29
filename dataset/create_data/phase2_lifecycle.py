@@ -586,4 +586,14 @@ print(f"   - 운용 신청: {len(df_op_req)}건 (신규 + 재사용)")
 print(f"   - 반납 발생: {len(df_return)}건")
 print(f"   - 불용 발생: {len(df_disuse)}건")
 print(f"   - 처분 발생: {len(df_disposal)}건")
-print(f"   - 상태 변경 이력: {len(df_history)}건")
+# 상태 변경 이력 상세 출력
+print(f"   - 상태 변경 이력(Total): {len(df_history)}건")
+if not df_history.empty:
+    # '(변경)운용상태' 별로 개수 집계
+    status_counts = df_history['(변경)운용상태'].value_counts()
+    
+    # 흐름 순서대로 보기 좋게 출력
+    check_order = ['취득', '운용', '반납', '불용', '처분']
+    for status in check_order:
+        count = status_counts.get(status, 0)
+        print(f"      └ {status}: {count}건")
