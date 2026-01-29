@@ -43,13 +43,14 @@ DEPT_MASTER_DATA = [
 # 출력 상태 확률 (출력, 미출력)
 PROBS_PRINT_STATUS = [0.2, 0.8]
 
-# 반납 발생 확률 (3년 초과, 5년 초과)
-PROB_RETURN_OVER_3Y = 0.3
-PROB_RETURN_OVER_5Y = 0.6
+# 반납 발생 확률 (현실적으로 낮춤)
+PROB_EARLY_RETURN = 0.01     # 초기 반납(신품, 잉여) 확률: 1%
+PROB_RETURN_OVER_3Y = 0.05   # 3년 초과 반납 확률: 5%
+PROB_RETURN_OVER_5Y = 0.15   # 5년 초과(내구연한) 반납 확률: 15%
 
 # 반납 사유 확률 (사용연한, 고장, 불용, 사업, 잉여)
 REASONS_RETURN = ['사용연한경과', '고장/파손', '불용결정', '사업종료', '잉여물품']
-PROBS_RETURN_REASON = [0.4, 0.2, 0.2, 0.1, 0.1]
+PROBS_RETURN_REASON = [0.6, 0.1, 0.05, 0.1, 0.05]
 
 # 승인 상태 (확정, 대기, 반려)
 STATUS_CHOICES = ['확정', '대기', '반려']
@@ -58,7 +59,7 @@ RECENT_WAIT_START = datetime(2024, 10, 1)  # 2024-10 이후
 
 # 각 단계별 승인 상태 확률
 PROBS_STATUS_RETURN = [0.85, 0.1, 0.05] 
-PROBS_STATUS_DISUSE = [0.70, 0.25, 0.05]
+PROBS_STATUS_DISUSE = [0.70, 0.25, 0.05] 
 PROBS_STATUS_DISPOSAL = [0.90, 0.08, 0.02]
 
 PROB_SURPLUS_STORE = 0.9  # 잉여물품 보관 확률 (불용 스킵)
@@ -243,52 +244,57 @@ for row in df_operation.itertuples():
         # B. [운용 중 사건 발생 결정] - 반납/직권불용/유지 결정
         # ===================================================
         next_event = '유지' # 기본값
-        event_date = today + timedelta(days=1) # 기본적으로 미래(종료)로 설정
+        event_date = today + timedelta(days=1) # 기본값(미래)
 
-        # 1. 반납 확률 및 시점 계산
-        # 운용 중인 물품에 한해서만 반납 발생
+        # 현재 물품의 나이 계산
         age_days = (today - acq_date).days
         days_since_use_start = (today - use_start_date).days
         
-        prob_return = 0.0
-        if age_days > 365 * 3: prob_return = PROB_RETURN_OVER_3Y # 3년 지남 (0.3)
-        if age_days > 365 * 5: prob_return = PROB_RETURN_OVER_5Y # 5년 지남 (0.6)
-        
-        # 반납 여부 결정
-        if random.random() < prob_return:
-            # 반납 발생! -> 시점 구체화
-            # 조건: 사용 기간과 취득 기간이 최소 30일은 넘어야 함
-            if age_days >= 30 and days_since_use_start >= 30:
-                max_days = min(age_days, days_since_use_start)
-                
-                # 반납일 = 운용시작일 + 30일 ~ 오늘 사이 랜덤
-                random_days = random.randint(30, max_days)
-                calculated_return_date = use_start_date + timedelta(days=random_days)
-                
-                # [중요] 계산된 반납일이 현재 시뮬레이션 시점(sim_cursor_date)보다 뒤여야 함 (시간 역행 방지)
-                # 만약 계산된 날짜가 이미 지난 날짜라면, 현재 시점 + 랜덤(14~45일)로 보정
-                if calculated_return_date <= sim_cursor_date:
-                    calculated_return_date = sim_cursor_date + timedelta(days=random.randint(14, 45))
-                
-                event_date = calculated_return_date
-                next_event = '반납'
-
-        # 2. 반납이 결정되지 않았다면? -> 직권 불용 or 유지 체크
-        if next_event == '유지':
-            # 직권 불용 확률 (매우 낮음, 아주 오래된 물품 위주)
-            prob_direct_disuse = 0.01 
-            if age_days > 365 * 7: prob_direct_disuse = 0.05 # 7년 넘으면 직권폐기 확률 증가
+        # ---------------------------------------------------
+        # 시나리오 1: 조기 반납 (신품/잉여)
+        # 조건: 운용 시작한 지 얼마 안 됨 + 확률 1%
+        # ---------------------------------------------------
+        is_early_return = False
+        if random.random() < PROB_EARLY_RETURN:
+            # 운용확정일로부터 30일 이내 반납 가능한지 체크
+            # (단, 현재 시뮬레이션 시점이 해당 기간을 지나지 않았거나, 과거 데이터 생성용일 때)
             
-            if random.random() < prob_direct_disuse:
-                next_event = '직권불용'
-                # 직권 불용은 현재 시점에서 1~6개월 내 발생
-                event_date = sim_cursor_date + timedelta(days=random.randint(30, 180))
-            else:
-                # 유지: 다음 이벤트 체크를 위해 날짜만 뒤로 미룸 (사실상 루프 종료용)
-                next_event = '유지'
-                event_date = sim_cursor_date + timedelta(days=random.randint(365, 730))
+            # 반납일 = 운용확정일 + 1~30일
+            early_return_date = use_start_date + timedelta(days=random.randint(1, 30))
+            
+            # 시간 역행 방지: 계산된 반납일이 sim_cursor_date보다 뒤여야 함
+            if early_return_date > sim_cursor_date:
+                event_date = early_return_date
+                next_event = '반납'
+                is_early_return = True
 
-        # 3. 미래 날짜 체크 (오늘을 넘어가면 사건 발생 안 함 -> 상태 유지하고 종료)
+        # ---------------------------------------------------
+        # 시나리오 2: 일반/노후 반납 (고장/내구연한)
+        # 조건: 취득 후 3년 이상 경과 (하자/노후는 3년 이후부터)
+        # ---------------------------------------------------
+        if next_event == '유지' and age_days > (365 * 3):
+            # 확률 결정
+            prob_return = PROB_RETURN_OVER_3Y # 5%
+            if age_days > (365 * 5): 
+                prob_return = PROB_RETURN_OVER_5Y # 15%
+            
+            if random.random() < prob_return:
+                # 반납일 = 현재 시점 + 30~365일 사이 (미래 사건)
+                late_return_date = sim_cursor_date + timedelta(days=random.randint(30, 365))
+                
+                event_date = late_return_date
+                next_event = '반납'
+                is_early_return = False
+
+        # ---------------------------------------------------
+        # 시나리오 3: 직권 불용 (아주 오래된 물품)
+        # ---------------------------------------------------
+        if next_event == '유지' and age_days > (365 * 8): # 8년 넘은 것들
+            if random.random() < 0.05: # 5% 확률로 직권 폐기
+                event_date = sim_cursor_date + timedelta(days=random.randint(30, 90))
+                next_event = '직권불용'
+
+        # 미래 날짜 체크
         if event_date > today:
             active_flag = False
             break
@@ -304,15 +310,23 @@ for row in df_operation.itertuples():
             active_flag = False
             break
 
-        # CASE 2: 반납 (-> 재사용 or 불용)
+        # CASE 2: 반납
         elif next_event == '반납':
-            # 반납 사유 및 상태 결정
-            return_reason = np.random.choice(REASONS_RETURN, p=PROBS_RETURN_REASON)
-            
-            if return_reason == '고장/파손': current_condition = '정비필요품'
-            elif return_reason == '사용연한경과': current_condition = '폐품'
-            elif return_reason == '잉여물품': current_condition = '신품'
-            else: current_condition = '중고품'
+            # [사유 및 상태 결정 로직 분기]
+            if is_early_return:
+                # 조기 반납 -> 무조건 '잉여물품', 상태 '신품'
+                return_reason = '잉여물품'
+                current_condition = '신품'
+            else:
+                # 일반 반납 -> 고장, 내구연한 등 (잉여물품 제외)
+                # 3년 넘은 물건을 잉여라고 하진 않으므로 제외
+                late_reasons = ['사용연한경과', '고장/파손', '불용결정', '사업종료']
+                late_probs = [0.5, 0.3, 0.1, 0.1]
+                return_reason = np.random.choice(late_reasons, p=late_probs)
+                
+                if return_reason == '고장/파손': current_condition = '정비필요품'
+                elif return_reason == '사용연한경과': current_condition = '폐품'
+                else: current_condition = '중고품'
 
             # 반납 승인 상태
             return_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_RETURN)
