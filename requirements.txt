@@ -9,3 +9,4 @@ tiktoken
 faiss-cpu
 tdqm
 sentence-transformers
+requests

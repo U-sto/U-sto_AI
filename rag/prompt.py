@@ -1,6 +1,8 @@
 import textwrap
 import app.config as config
+import zoneinfo
 from rag.faq_service import get_relevant_faq_string
+from datetime import datetime
 
 def build_question_classifier_prompt():
     """
@@ -213,4 +215,35 @@ def build_qa_generation_prompt() -> str:
 
     [내용]:
     {context}
+    """)
+
+
+# Function Calling(Tools) 전용 프롬프트
+
+# KST 타임존 객체는 변하지 않으므로 전역 상수로 한 번만 생성 (메모리 절약 & 속도 향상)
+KST = zoneinfo.ZoneInfo("Asia/Seoul")
+
+def build_tool_aware_system_prompt():
+    """
+    도구(Tools) 사용이 가능한 AI의 **도구 선택/사용 가이드용** 시스템 프롬프트 조각입니다.
+    이 프롬프트는 전체 시스템 프롬프트가 아니라, build_role_prompt에서 생성하는 페르소나/역할 프롬프트와 결합되어 사용되는 '도구 선택 로직' 부분만을 담당합니다.
+    """
+    # 현재 날짜 정보 (수명 계산 등을 위해 필요할 수 있음)
+    current_date = datetime.now(KST).strftime("%Y년 %m월 %d일")
+
+    return textwrap.dedent(f"""
+    [시스템 설정: 도구(Tools) 사용 및 판단 가이드]
+    오늘은 {current_date} 입니다.
+    당신은 사용자 질문을 분석하여 **필요한 경우에만** '도구(Tool)'를 선택해야 합니다.
+                          
+    [판단 기준 1: 도구를 사용해야 하는 경우]
+    다음 상황에서는 반드시 적절한 도구를 선택(Call)하세요.
+    1. **자산 실시간 정보 조회**: "이 물품의 운용부서 알려줘", "이 물품 취득금액이 얼마야?" 등 DB 데이터가 필요할 때
+       -> `get_item_detail_info` 호출
+    2. **미래 예측/수명 분석**: "수명 얼마나 남았어?", "교체 주기 알려줘", "언제 고장 나?" 등 분석이 필요할 때
+       -> `open_usage_prediction_page` 호출 (직접 계산 금지)
+    [판단 기준 2: 도구를 사용하지 않는 경우]
+    - "불용 처리 방법 알려줘", "반납 규정이 뭐야?", "물품 등록 절차는?" 등 **업무 절차, 방법, 규정**을 묻는 질문.
+    - 위와 같은 질문에서는 제공된 참고 자료(Context)와 일반적인 업무 지식을 활용해 직접 답변하세요.
+    - 다만, 위와 같은 질문에 자산의 실시간 정보 조회나 수명 예측이 **함께** 필요한 경우에는, [판단 기준 1]에 따라 해당 목적에 맞는 도구는 병행해서 사용할 수 있습니다.
     """)
