@@ -70,7 +70,7 @@ else:
 # 병합에 사용할 Master 정보
 master_cols = ['물품고유번호', '내용연수', '취득금액', '취득일자', '정리일자', 'G2B_목록명']
 df_master_info = df_op[master_cols].drop_duplicates(subset=['물품고유번호'])
-cols_to_merge = [c for c in master_cols if c not in df_du.columns or c == '물품고유번호']
+cols_to_merge = [c for c in master_cols if c == '물품고유번호' or c not in df_du.columns]
 view_du_item = pd.merge(df_du, df_master_info[cols_to_merge], on='물품고유번호', how='left')
 view_du_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_불용물품목록.csv'), index=False, encoding='utf-8-sig')
 
@@ -201,4 +201,8 @@ if not df_dp.empty:
     pending_cnt = len(df_dp) - len(confirmed_disposal_ids)
     if pending_cnt > 0:
         print(f"   ℹ️ 참고: 처분 심사 대기/반려 중인 건수: {pending_cnt}건 (이들은 '불용' 상태 유지됨)")
+    else:
+        # df_dp가 비어 있는 경우에도 검증 스킵 여부를 명시적으로 출력
+        print("3. 처분 상태(확정건): ℹ️ 처분 데이터가 없어 검증 건너뜀.")
+
 print("\n🎉 모든 작업이 완료되었습니다.")

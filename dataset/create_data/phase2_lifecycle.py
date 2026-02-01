@@ -70,6 +70,9 @@ PROBS_DISPOSAL_BAD = [0.03, 0.95, 0.01, 0.01]  # 상태 나쁨
 
 MAX_REUSE_CYCLES = 3     # 최대 재사용 횟수 제한
 
+PROB_SURPLUS_REUSE = 0.1
+PROB_MANDATORY_DISUSE = 0.05  # 8년 이상 직권 불용 확률: 5%
+
 # 기준일자 (오늘)
 now = datetime.now()
 TODAY = datetime(now.year, now.month, now.day)
@@ -113,7 +116,11 @@ def get_approval_status_and_date(base_date, prob_dist=None, event_type=None, is_
     """
     승인 상태 및 확정일자 결정
     :param base_date: 기준일자
+    :param prob_dist: 승인 상태 선택에 사용할 확률 분포 (STATUS_CHOICES 순서의 리스트 또는 배열)
     :param event_type: 'op_req', 'return', 'disuse', 'disposal' 등 이벤트 종류
+    :param is_op_req: 운용 신청 여부(True인 경우 운용 신청 전용 승인 로직 사용)
+    :return: (status, confirm_date, req_date) 튜플. status는 승인 상태 문자열,
+            confirm_date는 실제 승인/처리일자, req_date는 신청/요청일자(대기 상태일 경우 확인일자)
     """
     # 상태 결정
     if is_op_req:
@@ -177,7 +184,9 @@ def step_operation_req(ctx):
     if ctx['need_initial_req']:
         req_type = '신규운용'
     else:
-        reuse_cnt = ctx.get('reuse_count', 1)
+        # 재사용 시 재사용 차수를 증가시키고 컨텍스트에 저장
+        reuse_cnt = ctx.get('reuse_count', 0) + 1
+        ctx['reuse_count'] = reuse_cnt
         req_type = f'재사용({reuse_cnt}회차)' if reuse_cnt > 0 else '재사용'
     
     results['req'].append({
@@ -207,7 +216,7 @@ def step_operation_req(ctx):
     df_operation.at[ctx['idx'], '운용부서'] = ctx['curr_dept_name']
     df_operation.at[ctx['idx'], '운용부서코드'] = ctx['curr_dept_code']
     
-    if ctx['loop_count'] in (0,1):
+    if ctx['loop_count'] == 1:
         df_operation.at[ctx['idx'], '출력상태'] = np.random.choice(['출력', '미출력'], p=PROBS_PRINT_STATUS)
 
     # 이력 추가
@@ -218,6 +227,7 @@ def step_operation_req(ctx):
 def step_determine_event(ctx):
     """B. 운용 중 사건 발생 결정"""
     sim_date = ctx['sim_cursor_date']
+    df_operation = ctx['df_operation']
     acq_date = pd.to_datetime(ctx['row'].취득일자)
     use_start_date = pd.to_datetime(df_operation.at[ctx['idx'], '운용확정일자']) if '운용확정일자' in df_operation.columns and pd.notna(df_operation.at[ctx['idx'], '운용확정일자']) else sim_date
     
@@ -249,11 +259,16 @@ def step_determine_event(ctx):
             
     # 3. 직권 불용 (8년 이상, 5%)
     if next_event == '유지' and age_days > (365 * 8):
-        if random.random() < 0.05:
+        if random.random() < PROB_MANDATORY_DISUSE:
             event_date = sim_date + timedelta(days=random.randint(30, 90))
             next_event = '직권불용'
 
-    if event_date > TODAY: return '유지', event_date, False # 미래 사건은 유지로 처리
+    if event_date > TODAY:
+        # 미래 사건은 유지로 처리 (커서는 이동하지 않음)
+        return '유지', event_date, False
+    # 실제 사건이 발생하지 않은 경우, 시뮬레이션 커서를 이동하지 않는다.
+    if next_event == '유지':
+        return next_event, event_date, is_early
 
     ctx['sim_cursor_date'] = event_date
     return next_event, event_date, is_early
@@ -307,7 +322,7 @@ def step_process_return(ctx, event_date, is_early):
         ctx['sim_cursor_date'] = confirm_date
         
         # 재사용 여부 결정 (신품 & 10% 확률)
-        if condition == '신품' and random.random() < 0.1:
+        if condition == '신품' and random.random() < PROB_SURPLUS_REUSE:
             # 부서 재배정
             new_dept = random.choice(DEPT_MASTER_DATA)
             ctx['curr_dept_code'] = new_dept[0]
@@ -457,6 +472,9 @@ for row in df_operation.itertuples():
         # A. 운용 신청
         if not step_operation_req(ctx):
             break # 신청 안되거나 승인 안되면 종료
+        
+        # 운용 신청이 정상적으로 이루어진 경우에만 루프 카운트 증가
+        ctx['loop_count'] += 1
 
         # B. 이벤트 결정 (유지, 반납, 직권불용)
         event_type, event_date, is_early = step_determine_event(ctx)
@@ -471,6 +489,7 @@ for row in df_operation.itertuples():
             if result_action == '재사용':
                 # 재사용 시, 다음 루프의 이력 생성을 위해 현재 상태를 '반납'으로 명시
                 ctx['curr_status'] = '반납'
+                ctx['prev_status'] = '반납'
                 continue # 루프 처음으로 (운용신청 다시 함)
             elif result_action == '불용진행':
                 ctx['curr_status'] = '반납'
