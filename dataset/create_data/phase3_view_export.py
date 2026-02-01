@@ -97,12 +97,30 @@ df_scd_raw = pd.merge(df_hist, df_static, on='물품고유번호', how='left')
 
 # 3-2. [Fix] 부서 정보 복원 (리뷰 반영)
 # 운용대장은 반납 시 부서가 비어있으므로, df_req(운용신청)에서 최근 부서를 가져와 채움
-if not df_req.empty:
-    dept_map = df_req.sort_values('운용신청일자').drop_duplicates('물품고유번호', keep='last')[['물품고유번호', '운용부서']]
-    df_scd_raw = pd.merge(df_scd_raw, dept_map, on='물품고유번호', how='left', suffixes=('', '_req'))
-    # 이력 자체의 부서가 비어있으면 신청 당시 부서로 채움
-    df_scd_raw['운용부서'] = df_scd_raw['운용부서'].replace('', pd.NA).fillna(df_scd_raw['운용부서_req']).fillna('')
-    df_scd_raw = df_scd_raw.drop(columns=['운용부서_req'])
+if (not df_req.empty) and ('운용부서' in df_req.columns):
+    dept_map = (
+        df_req.sort_values('운용신청일자')
+        .drop_duplicates('물품고유번호', keep='last')[['물품고유번호', '운용부서']]
+    )
+
+    df_scd_raw = pd.merge(
+        df_scd_raw,
+        dept_map,
+        on='물품고유번호',
+        how='left',
+        suffixes=('', '_req')
+    )
+
+    # 운용부서_req 컬럼이 존재할 때만 보정
+    if '운용부서_req' in df_scd_raw.columns:
+        df_scd_raw['운용부서'] = (
+            df_scd_raw['운용부서']
+            .replace('', pd.NA)
+            .fillna(df_scd_raw['운용부서_req'])
+            .fillna('')
+        )
+        df_scd_raw = df_scd_raw.drop(columns=['운용부서_req'])
+
 
 # 4. 상태값 매핑 및 포맷팅
 df_scd_raw['운용상태'] = df_scd_raw['(변경)운용상태']
@@ -138,19 +156,28 @@ else:
     print("   ❌ FAIL: 데이터 불일치 발생.")
 
 # 검증 2: 날짜 논리 확인
-print("2. 날짜 논리 검증 (취득일자 < 불용일자)")
 if not df_du.empty:
     # df_du에 취득일자가 없을 수도 있으므로 df_master_info와 병합된 view_du_item 사용 권장
     df_check = view_du_item.copy()
     df_check['취득일자'] = pd.to_datetime(df_check['취득일자'], errors='coerce')
     df_check['불용일자'] = pd.to_datetime(df_check['불용일자'], errors='coerce')
-    
-    error_count = (df_check['불용일자'] < df_check['취득일자']).sum()
-    
-    if error_count == 0:
+
+    # NaT 여부 집계
+    invalid_mask = df_check['취득일자'].isna() | df_check['불용일자'].isna()
+    invalid_cnt = invalid_mask.sum()
+
+    # 유효 날짜만 비교
+    valid_df = df_check[~invalid_mask]
+    error_cnt = (valid_df['불용일자'] < valid_df['취득일자']).sum()
+
+    print("2. 날짜 논리 검증 (취득일자 < 불용일자)")
+    if error_cnt == 0:
         print("   ✅ PASS: 시간 순서 정상.")
     else:
-        print(f"   ❌ FAIL: {error_count}건 시간 역전.")
+        print(f"   ❌ FAIL: {error_cnt}건 시간 역전.")
+
+    if invalid_cnt > 0:
+        print(f"   ⚠️ 참고: 날짜 누락/형식 오류 {invalid_cnt}건 존재.")
 else:
     print("   ℹ️ 불용 데이터가 없어 검증 건너뜀.")
 
@@ -160,12 +187,15 @@ if not df_dp.empty:
     confirmed_disposal_ids = df_dp[df_dp['승인상태'] == '확정']['물품고유번호'].unique()
     
     # 운용대장에서 해당 ID 조회
-    op_status = df_op[df_op['물품고유번호'].isin(confirmed_disposal_ids)]['운용상태']
+    if len(confirmed_disposal_ids) == 0:
+        # 확정된 처분 건이 없는 경우
+        print("3. 처분 상태(확정건): ℹ️ 확정된 처분 건이 없어 검증 건너뜀.")
     
     # 상태가 '처분'이 아닌 것 카운트
-    err_cnt = (op_status != '처분').sum()
-    
-    print(f"3. 처분 상태(확정건): {'✅ PASS' if err_cnt == 0 else f'❌ FAIL ({err_cnt}건 미반영)'}")
+    else:
+        op_status = df_op[df_op['물품고유번호'].isin(confirmed_disposal_ids)]['운용상태']
+        err_cnt = (op_status != '처분').sum()
+        print(f"3. 처분 상태(확정건): {'✅ PASS' if err_cnt == 0 else f'❌ FAIL ({err_cnt}건 미반영)'}")
     
     # (참고) 대기/반려 상태인 건수 출력
     pending_cnt = len(df_dp) - len(confirmed_disposal_ids)
