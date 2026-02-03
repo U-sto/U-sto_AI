@@ -242,6 +242,25 @@ def step_determine_event(ctx):
     next_event = '유지'
     event_date = TODAY + timedelta(days=1)
     is_early = False
+    # -----------------------------------------------------------
+    # [NEW] 0. 강제 직권 불용 체크 (최우선 순위)
+    # 조건: 내용연수 + 3년이 지난 물품은 무조건 폐기
+    # -----------------------------------------------------------
+    mandatory_disuse_days = (life_years + 3) * 365
+    
+    if age_days >= mandatory_disuse_days:
+        # 시뮬레이션 시점에서 처리 가능한 날짜 계산 (1~30일 뒤)
+        calc_date = sim_date + timedelta(days=random.randint(1, 30))
+        
+        if calc_date > TODAY: calc_date = TODAY
+        
+        # 이미 처리 시점이 지났으면 현재 시점으로
+        if calc_date < sim_date: calc_date = sim_date
+
+        event_date = calc_date
+        next_event = '직권불용'
+        return next_event, event_date, False
+    # -----------------------------------------------------------
 
     # 1. 조기 반납 (1%)
     if random.random() < PROB_EARLY_RETURN:
@@ -262,12 +281,6 @@ def step_determine_event(ctx):
                 event_date = calc_date
                 next_event = '반납'
                 is_early = False
-            
-    # 3. 직권 불용 (8년 이상, 5%)
-    if next_event == '유지' and age_days > (365 * 8):
-        if random.random() < PROB_MANDATORY_DISUSE:
-            event_date = sim_date + timedelta(days=random.randint(30, 90))
-            next_event = '직권불용'
 
     if event_date > TODAY:
         # 미래 사건은 유지로 처리 (커서는 이동하지 않음)
