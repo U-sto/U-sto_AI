@@ -13,16 +13,27 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 
 print("📂 [Phase 4] AI 학습용 데이터 전처리 시작...")
 
+# [Fix] 안전한 파일 로딩 함수 정의 (파일이 없어도 에러 없이 빈 DF 반환)
+def load_csv_safe(filename, required=False):
+    filepath = os.path.join(LOAD_DIR, filename)
+    if os.path.exists(filepath):
+        return pd.read_csv(filepath)
+    else:
+        if required:
+            print(f"❌ 필수 데이터 파일 누락: {filename}")
+            exit()
+        else:
+            print(f"   ⚠️ 파일 없음 (빈 DataFrame 생성): {filename}")
+            return pd.DataFrame()
+
 # 1. 데이터 로드 (모든 생애주기 데이터)
-try:
-    df_op = pd.read_csv(os.path.join(LOAD_DIR, '04_01_operation_master.csv')) # 운용
-    df_rt = pd.read_csv(os.path.join(LOAD_DIR, '04_03_return_list.csv'))      # 반납
-    df_du = pd.read_csv(os.path.join(LOAD_DIR, '05_01_disuse_list.csv'))      # 불용
-    df_dp = pd.read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))    # 처분
-    print(f"   - 원천 데이터 로드 완료: 총 {len(df_op)}건")
-except FileNotFoundError as e:
-    print(f"❌ 데이터 파일 누락: {e}")
-    exit()
+# 운용 대장은 필수, 나머지는 조건부 생성되므로 없을 수 있음
+df_op = load_csv_safe('04_01_operation_master.csv', required=True) # 운용 (필수)
+df_rt = load_csv_safe('04_03_return_list.csv')      # 반납 (선택)
+df_du = load_csv_safe('05_01_disuse_list.csv')      # 불용 (선택)
+df_dp = load_csv_safe('06_01_disposal_list.csv')    # 처분 (선택)
+
+print(f"   - 원천 데이터 로드 완료: 운용 대장 {len(df_op)}건")
 
 # ---------------------------------------------------------
 # 1. 데이터 병합 (Master Table 생성)

@@ -383,7 +383,7 @@ def generate_acquisition_data(count):
     now = datetime.now()
     today = datetime(now.year, now.month, now.day)
     
-    # 물품 인덱스 리스트 (0 ~ 19)
+    # 물품 인덱스 리스트 (0 ~ len(G2B_MASTER_DATA)-1)
     item_indices = range(len(G2B_MASTER_DATA))
 
     for _ in range(count):
@@ -471,7 +471,7 @@ def generate_acquisition_data(count):
             # 예: "43211503 노트북컴퓨터" -> "노트북컴퓨터" 추출 시도
             try:
                 key_candidate = class_name.split(' ')[1]
-            except:
+            except(IndexError, AttributeError):
                 key_candidate = class_name
                 
             candidates = REMARK_TEMPLATES_BY_CLASS.get(key_candidate, [])
