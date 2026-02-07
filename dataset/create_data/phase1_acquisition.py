@@ -466,14 +466,19 @@ def generate_acquisition_data(count):
         if approval_status == '반려':
             remark = "예산 초과로 인한 반려"
         elif random.random() < 0.1: # 10% 확률로 비고 생성
-            # 물품 분류(품목명 키워드)에 맞는 비고 템플릿 선택
-            # G2B_MASTER_DATA의 4번째 요소(class_name) 활용
-            # 예: "43211503 노트북컴퓨터" -> "노트북컴퓨터" 추출 시도
+            # 기존 split(' ')[1] 방식 제거하고 안전한 매핑 로직 적용
             try:
-                key_candidate = class_name.split(' ')[1]
-            except(IndexError, AttributeError):
-                key_candidate = class_name
+                # 우선순위 1: item_name 그대로 사용 ("노트북컴퓨터")
+                key_candidate = item_name
                 
+                # 매핑되지 않으면 콤마로 분리 시도 (혹시 class_name에 브랜드 등이 섞인 경우)
+                if key_candidate not in REMARK_TEMPLATES_BY_CLASS:
+                    # 예: "노트북컴퓨터, LG전자" -> "노트북컴퓨터"
+                    key_candidate = str(item_name).split(',')[0].strip()
+
+            except (IndexError, AttributeError):
+                key_candidate = item_name
+
             candidates = REMARK_TEMPLATES_BY_CLASS.get(key_candidate, [])
             # 매핑 실패 시 포괄적인 키워드로 재시도 (예: 컴퓨터 -> 데스크톱)
             if not candidates:
