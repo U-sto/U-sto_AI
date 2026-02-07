@@ -276,8 +276,7 @@ def step_determine_event(ctx):
     
     age_days = (TODAY - acq_date).days
     days_since_use = (TODAY - use_start_date).days
-    
-    next_event = '유지'
+
     event_date = TODAY + timedelta(days=1)
     # -----------------------------------------------------------
     # 1. [직권불용] 행정적 강제 처분 (내용연수 + 1년)
@@ -531,10 +530,19 @@ for row in df_operation.itertuples():
     mu, sigma = REAL_LIFETIME_STATS["default"]
     
     # 목록명이나 분류명에서 키워드 검색하여 통계 적용
-    target_name = str(row.G2B_목록명) # 혹은 row.물품분류명
-    for key, stats in REAL_LIFETIME_STATS.items():
-        if key in target_name:
-            mu, sigma = stats
+    # 대소문자 무시 및 긴 키워드 우선 매칭 적용
+    target_name = str(row.G2B_목록명)
+    target_name_norm = target_name.strip().casefold()
+    
+    # 키워드 길이 역순 정렬 (구체적인 단어가 먼저 매칭되도록)
+    sorted_keys = sorted(REAL_LIFETIME_STATS.keys(), key=len, reverse=True)
+    
+    for key in sorted_keys:
+        if key == "default": continue # default는 루프 밖에서 처리하거나 마지막에
+        
+        # casefold()로 대소문자 무시 비교
+        if key.casefold() in target_name_norm:
+            mu, sigma = REAL_LIFETIME_STATS[key]
             break
             
     # [NEW] 2. 정규분포(Normal Distribution)에서 샘플링
@@ -614,7 +622,7 @@ for row in df_operation.itertuples():
                 '물품고유번호': ctx['asset_id'], 
                 '취득일자': row.취득일자, '취득금액': row.취득금액,
                 '정리일자': row.정리일자, '운용부서': '', 
-                '운용상태' : '운용', '내용연수': row.내용연수,
+                '운용상태' : '불용', '내용연수': row.내용연수,
                 '물품상태': '폐품', '사유': disuse_reason
             })
             

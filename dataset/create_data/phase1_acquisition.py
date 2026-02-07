@@ -295,10 +295,10 @@ ITEM_WEIGHTS = [
     # =========================
     # IT / 전산 장비 (72%)
     # =========================
-    0.160,  # 노트북 (고급형)
-    0.130,  # 노트북 (보급형)
-    0.140,  # 데스크톱 (고급형)
-    0.110,  # 데스크톱 (보급형)
+    0.135,  # 노트북 (고급형) - 기존 0.160 -> 0.135
+    0.105,  # 노트북 (보급형) - 기존 0.130 -> 0.105
+    0.115,  # 데스크톱 (고급형) - 기존 0.140 -> 0.115
+    0.085,  # 데스크톱 (보급형) - 기존 0.110 -> 0.085
     0.120,  # 모니터
     0.055,  # 레이저프린터
     0.030,  # 스캐너
@@ -315,6 +315,8 @@ ITEM_WEIGHTS = [
     0.040,  # 칠판보조장
     0.045,  # 인터랙티브화이트보드
 ]
+# [Fix] ITEM_WEIGHTS 합계 검증 로직 추가
+assert abs(sum(ITEM_WEIGHTS) - 1.0) < 0.001, f"ITEM_WEIGHTS sum is {sum(ITEM_WEIGHTS)}, must be 1.0"
 
 # 2. 각 물품별 부서 구매 비율 (인덱스: G2B_MASTER_DATA의 인덱스)
 # 부서 순서: [C354(소프트), C352(공학), C364(경상), C360(글로벌), A351(시설), A320(학생)]
@@ -339,6 +341,33 @@ DEPT_WEIGHTS_BY_ITEM = {
     13: [0.20, 0.30, 0.25, 0.15, 0.08, 0.02], # 칠판보조장
     14: [0.22, 0.32, 0.20, 0.14, 0.10, 0.02], # 화이트보드
 }
+def _validate_dept_weights_by_item():
+    """
+    Validate that DEPT_WEIGHTS_BY_ITEM has the expected structure:
+    - All item indices from 0 to 14 are present.
+    - Each item has exactly 6 department weights.
+    - Each set of weights sums to 1.0 (within a small numerical tolerance).
+    """
+    expected_num_items = 15
+    expected_num_depts = 6
+    missing_indices = [i for i in range(expected_num_items) if i not in DEPT_WEIGHTS_BY_ITEM]
+    if missing_indices:
+        raise ValueError(
+            f"DEPT_WEIGHTS_BY_ITEM is missing definitions for item indices: {missing_indices}"
+        )
+    for item_idx, weights in DEPT_WEIGHTS_BY_ITEM.items():
+        if len(weights) != expected_num_depts:
+            raise ValueError(
+                f"DEPT_WEIGHTS_BY_ITEM[{item_idx}] has {len(weights)} weights; "
+                f"expected {expected_num_depts}."
+            )
+        total_weight = sum(weights)
+        if not np.isclose(total_weight, 1.0, atol=1e-6):
+            raise ValueError(
+                f"DEPT_WEIGHTS_BY_ITEM[{item_idx}] weights sum to {total_weight:.10f}; "
+                "expected sum of 1.0."
+            )
+_validate_dept_weights_by_item()
 # ---------------------------------------------------------
 # 2. 데이터 생성 로직 (Phase 1)
 # ---------------------------------------------------------

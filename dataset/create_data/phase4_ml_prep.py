@@ -39,9 +39,7 @@ df_merged = pd.merge(df_merged, df_du[['물품고유번호', '불용일자', '�
 df_merged.rename(columns={'사유': '불용사유'}, inplace=True)
 
 # (3) + 처분 (Left Join) -> 처분방식, 물품상태 확보
-# 처분내역의 '처분구분' -> '처분방식'
 df_merged = pd.merge(df_merged, df_dp[['물품고유번호', '처분방식', '물품상태']], on='물품고유번호', how='left')
-df_merged.rename(columns={'처분구분': '처분방식'}, inplace=True)
 
 # ---------------------------------------------------------
 # 2. 칼럼 매핑 및 파생변수 생성 (Feature Engineering)
@@ -78,7 +76,7 @@ df_final['물품상태'] = df_merged['물품상태'] # 처분 시 물리적 등�
 df_final['처분방식'] = df_merged['처분방식']
 df_final['운용부서명'] = df_merged['운용부서']
 df_final['캠퍼스'] = df_merged['캠퍼스']
-df_final['서비스계수'] = 1.65 # 95% 신뢰수준 Z값 (상수)
+# df_final['서비스계수'] = 1.65 # 95% 신뢰수준 Z값 (상수) - 사용 X
 
 # --- B. 파생 변수 (Derived Features) ---
 
@@ -143,10 +141,12 @@ df_final['장비중요도'] = ((df_final['가격민감도'] * 0.7) + ((df_final[
 # --- C. 예측값/결과값 (Placeholder) ---
 # AI 모델 추론 전이므로 초기값 설정
 
-# (1) 실제잔여수명 [정답지]
-# 학습용 데이터(Y)인 경우: 수명이 다했으므로 잔여수명은 0 (혹은 실제 수명 - 사용 수명인데, 여기선 시점 기준 0으로 수렴)
-# 실제 회귀 학습시에는 (사망시점 - 관측시점)이 Label이 되지만, Master Table에서는 0으로 표기
-df_final['실제잔여수명'] = np.where(df_final['학습데이터여부'] == 'Y', 0, np.nan)
+# (1) 실제잔여수명 (현재는 정답지가 아님, Placeholder 용도)
+#   - 실제 회귀 학습 시에는 (사망시점 - 관측시점)을 Label로 계산하여 사용해야 함
+#   - 본 Master Table에서는 아직 해당 값이 계산되지 않았으므로, 모든 행을 NaN으로 두어
+#     어떤 학습/평가 코드에서도 이 필드를 그대로 정답지로 사용하지 않도록 함
+df_final['실제잔여수명'] = np.nan  # [Fix] 0에서 np.nan으로 변경
+
 
 # (2) 예측 및 재고 관련 필드 (초기화)
 df_final['예측잔여수명'] = np.nan            # 모델 예측 후 채움
@@ -259,15 +259,15 @@ print(f"   - Pred  (운용) : {len(df_pred_source)}건")
 output_cols = [
     '물품고유번호', 'G2B목록명', '물품분류명', '내용연수', '취득금액', '운용부서코드', 
     '취득일자', '반납일자', '불용일자', '상태변화', '불용사유', '물품상태', 
-    '처분방식', '운용부서명', '캠퍼스', '서비스계수',
+    '처분방식', '운용부서명', '캠퍼스',
     '운용연차', '학습데이터여부', '잔여내용연수', '부서가혹도', '누적사용부하', 
     '고장임박도', '가격민감도', '장비중요도', '리드타임등급',
     '실제잔여수명', '예측잔여수명', '(월별)고장예상수량', '안전재고', '필요수량', 
-    'AI예측고장일', '안전버퍼', '권장발주일', '예측실행일자'
+    'AI예측고장일', '안전버퍼', '권장발주일', '예측실행일자', '데이터세트구분'
 ]
 
-# 칼럼 필터링
-df_export = df_final[output_cols]
+# 컬럼 필터링 (누락된 컬럼이 있어도 에러 없이 NaN으로 채워지도록 reindex 사용)
+df_export = df_final.reindex(columns=output_cols)
 
 save_path = os.path.join(SAVE_DIR, 'phase4_training_data.csv')
 df_export.to_csv(save_path, index=False, encoding='utf-8-sig')
