@@ -113,177 +113,286 @@ def generate_acquisition_data_lifecycle():
     # 1. 부서별로 루프 (각 부서의 정원을 채우는 방식)
     for dept_code, dept_name, dept_scale in DEPT_MASTER_DATA:
         
-        # 2. 각 물품(G2B Item)별로 이 부서가 몇 개를 가질지(Quota) 결정
+        # 2. 각 물품(G2B Item)별 보유 정원(Quota) 결정
         for item_data in G2B_MASTER_DATA:
             class_code, id_code, item_name, model_name, life_years, base_price = item_data
             
-            # (1) 품목별 보유 수량(Quota) 결정 로직 (정교화)
-            base_qty = 0
+            # (1) 품목별 총 보유 목표 수량(Total Quota) 결정 [수정됨]
+            target_total_qty = 0
             
-            # --- IT 장비 ---
+            # --- A. 핵심 IT 장비 (PC, 모니터) ---
             if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "액정모니터"]:
-                # SW대학/공대는 PC가 훨씬 많아야 함
-                multiplier = 1.5 if "소프트웨어" in dept_name or "공학" in dept_name else 1.0
-                base_qty = int(random.randint(15, 30) * dept_scale * multiplier)
+                # SW/공대는 실습실 수요로 인해 일반 행정팀보다 훨씬 많음
+                multiplier = 1.5 if "소프트웨어" in dept_name or "공학" in dept_name else 0.6
+                # (예: SW대학=45대, 학생팀=18대)
+                target_total_qty = int(random.randint(20, 40) * dept_scale * multiplier)
                 
-            # --- 주변기기 ---
-            elif item_name in ["레이저프린터", "스캐너", "복사기", "공기청정기"]:
-                # 사무실당 1~2대 수준
-                base_qty = int(random.randint(1, 3) * dept_scale)
+            # --- B. 사무 주변기기 (프린터, 스캐너, 공기청정기 등) ---
+            elif item_name in ["레이저프린터", "스캐너", "다기능복사기", "공기청정기", "세단기"]:
+                # 부서 규모에 따라 2~5대 수준 보유
+                target_total_qty = int(random.randint(2, 4) * dept_scale)
                 
-            # --- 네트워크 장비 ---
-            elif item_name in ["네트워크라우터", "네트워크시스템장비용랙", "하드디스크드라이브"]:
-                # 시설팀이나 공대/SW대학 위주
+            # --- C. 네트워크/인프라 장비 (특수 부서용) ---
+            elif item_name in ["네트워크라우터", "네트워크시스템장비용랙", "하드디스크드라이브", "허브", "플래시메모리저장장치"]:
+                # 시설팀, SW, 공대 위주 보유 (나머지 부서는 0~1개)
                 if "시설" in dept_name or "소프트웨어" in dept_name or "공학" in dept_name:
-                    base_qty = int(random.randint(2, 5) * dept_scale)
+                    target_total_qty = int(random.randint(3, 8) * dept_scale)
                 else:
-                    base_qty = int(random.randint(0, 1)) # 일반 행정팀은 거의 없음
+                    target_total_qty = int(random.randint(0, 1))
 
-            # --- 가구/비품 ---
-            elif item_name in ["책상", "작업용의자"]:
-                # PC 수량과 비슷하거나 조금 더 많음 (사람 수 비례)
-                base_qty = int(random.randint(20, 40) * dept_scale)
-            elif item_name in ["책상용콤비의자", "칠판보조장", "인터랙티브화이트보드"]:
-                # 강의실용 -> 학과 행정팀에 배정
-                base_qty = int(random.randint(5, 10) * dept_scale)
+            # --- D. 가구/강의실 비품 (대량) ---
+            elif item_name in ["책상", "작업용의자", "책걸상"]:
+                # 인원수 + 강의실/회의실 수요 (30~60개)
+                target_total_qty = int(random.randint(30, 60) * dept_scale)
+
+            # --- E. 고가/특수 교육 기자재 ---
+            elif item_name in ["인터랙티브화이트보드", "칠판보조장"]:
+                target_total_qty = int(random.randint(1, 3) * dept_scale)
+
+            # --- F. 기타 (카메라 등) ---
+            else: 
+                target_total_qty = int(random.randint(0, 2) * dept_scale)
+
+            # (2) 목표 수량을 채울 때까지 '구매 건(Batch)' 생성
+            remaining_qty = target_total_qty
+            
+            while remaining_qty > 0:
+                # A. 이번 구매 건의 수량(Batch Size) 결정 [수정됨]
+                is_bulk_purchase = False 
                 
-            # --- 기타 ---
-            else: # 디지털카메라 등
-                base_qty = int(random.randint(0, 2) * dept_scale)
+                # 1) 대량 구매 가능 품목 (PC, 가구)
+                if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "책상", "작업용의자", "책걸상"]:
+                    # 30% 확률로 강의실/실습실 구축용 대량 구매 (10~20개)
+                    if remaining_qty >= 10 and random.random() < 0.3:
+                        batch_size = random.randint(10, 20)
+                        is_bulk_purchase = True
+                    else:
+                        # 나머지는 개인 지급/소량 교체 (1~3개)
+                        batch_size = random.randint(1, 3)
+                        
+                # 2) 네트워크/주변기기 (소량 묶음)
+                elif item_name in ["네트워크라우터", "네트워크시스템장비용랙", "하드디스크드라이브"]:
+                     # 인프라 구축 시 2~4개씩 살 수 있음
+                     batch_size = random.randint(1, 4)
+                     
+                # 3) 그 외 단일 품목 (프린터, 카메라 등)
+                else:
+                    batch_size = 1
 
-            # (2) 할당된 수량(Quota)만큼 '최초 구매 -> 교체 구매' 사이클 생성
-            for i in range(base_qty):
-                # ------------------------------------------------
-                # A. 최초 도입 시점 결정 (2015 ~ 2019 사이 랜덤 도입)
-                # ------------------------------------------------
+                # 남은 목표 수량보다 많이 살 순 없음
+                if batch_size > remaining_qty:
+                    batch_size = remaining_qty
+
+                # B. 최초 도입 시점 결정 (2015 ~ 2019 분산)
+                # 대량 구매끼리는 날짜가 겹치지 않게 연도 분산
                 start_year = random.randint(SIMULATION_START_YEAR, 2019)
                 start_month = random.randint(1, 12)
                 start_day = random.randint(1, 28)
                 current_date = datetime(start_year, start_month, start_day)
 
-                # ------------------------------------------------
-                # B. 현재 날짜까지 시간이 흐르며 재구매(교체) 발생
-                # ------------------------------------------------
+                # C. 생애주기 루프 (최초 구매 -> 수명 종료 후 교체 구매)
                 while current_date < TODAY:
                     
-                    # 1) 승인 상태 결정 (확정/대기/반려)
-                    # 대부분 확정이지만, 가끔 반려나 대기가 섞임
+                    # 1) 승인 상태
                     approval_status = np.random.choice(APPROVAL_STATUSES, p=APPROVAL_RATIOS)
                     
-                    # [디테일] 과거 데이터(현재보다 훨씬 이전)는 '대기' 상태일 수 없음 (이미 처리되었어야 함)
-                    # 따라서 최근(2024.10 이후)이 아니면 강제로 '확정' 처리
-                    if approval_status == '대기':
-                        if current_date < datetime(2024, 10, 1):
-                            approval_status = '확정'
-                            
-                    # [디테일] 반려인 경우, 실제 자산화되지 않으므로 루프(수명 주기)에는 영향 없지만 이력에는 남음
-                    # 시뮬레이션상으로는 반려 후 바로 다시 신청해서 샀다고 가정하고 날짜만 조금 뒤로 미룸
+                    # 과거 데이터 대기 방지
+                    if approval_status == '대기' and current_date < datetime(2024, 10, 1):
+                        approval_status = '확정'
+                    
+                    # 반려 시뮬레이션
                     if approval_status == '반려':
-                        # 반려 기록 생성
-                        _create_acquisition_row(acquisition_list, current_date, item_data, dept_code, dept_name, approval_status)
-                        # 7~30일 뒤 재신청(확정) 했다고 가정
-                        current_date = current_date + timedelta(days=random.randint(7, 30))
-                        approval_status = '확정' # 재신청은 확정으로 진행
+                        _create_acquisition_row(acquisition_list, current_date, item_data, dept_code, dept_name, approval_status, batch_size, is_bulk_purchase)
+                        current_date = current_date + timedelta(days=random.randint(14, 60))
+                        approval_status = '확정'
 
-                    # 2) 정리일자 생성 (확정일 때만)
+                    # 2) 정리일자
                     clear_date_str = ""
                     if approval_status == '확정':
-                        random_days = random.randint(3, 14)
-                        c_date = current_date + timedelta(days=random_days)
+                        # 대량 구매는 검수 기간이 깁니다 (7~20일)
+                        days_add = random.randint(7, 20) if is_bulk_purchase else random.randint(3, 7)
+                        c_date = current_date + timedelta(days=days_add)
                         if c_date > TODAY: c_date = TODAY
                         clear_date_str = c_date.strftime('%Y-%m-%d')
                     
-                    # 3) 데이터 행 생성 및 추가
-                    _create_acquisition_row(acquisition_list, current_date, item_data, dept_code, dept_name, approval_status, clear_date_str)
+                    # 3) 데이터 생성 (batch_size 그대로 전달)
+                    _create_acquisition_row(acquisition_list, current_date, item_data, dept_code, dept_name, approval_status, batch_size, is_bulk_purchase, clear_date_str)
                     
-                    # 4) [핵심] 다음 구매(교체) 시점 계산
-                    # 내용연수 + 알파(0~2년 지연) + 랜덤 오차(일)
-                    # 예: 노트북(6년) -> 6년 ~ 8년 사이 사용 후 교체
+                    # 4) 다음 교체 시기 계산
+                    # 내용연수 + 지연(0~2년)
                     usage_years = life_years + random.uniform(0, 2)
                     next_purchase_date = current_date + timedelta(days=int(usage_years * 365) + random.randint(-30, 30))
                     
-                    # 날짜 갱신 (다음 사이클로 이동)
                     current_date = next_purchase_date
+                
+                # 남은 목표 수량 차감
+                remaining_qty -= batch_size
     
     # [NEW] 특수 물품(서버) 데이터 주입
     _inject_special_server_data(acquisition_list)
 
     return pd.DataFrame(acquisition_list)
 
-def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name, approval_status, clear_date_str=""):
-    """단일 취득 데이터 행을 생성하여 리스트에 추가하는 헬퍼 함수"""
+# ---------------------------------------------------------
+# 2. 로직: "수명 주기 기반(Lifecycle-based)" 데이터 생성 (배치 구매 적용)
+# ---------------------------------------------------------
+
+def generate_acquisition_data_lifecycle():
+    print(f"🚀 [Phase 1] 수명 주기 기반(Lifecycle) 데이터 생성을 시작합니다...")
+    acquisition_list = []
+    
+    # 1. 부서별로 루프
+    for dept_code, dept_name, dept_scale in DEPT_MASTER_DATA:
+        
+        # 2. 각 물품(G2B Item)별 보유 정원(Quota) 결정
+        for item_data in G2B_MASTER_DATA:
+            class_code, id_code, item_name, model_name, life_years, base_price = item_data
+            
+            # (1) 품목별 총 보유 목표 수량(Total Quota) 결정
+            target_total_qty = 0
+            
+            # --- IT 장비 ---
+            if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "액정모니터"]:
+                # SW/공대는 실습실이 있어 많음, 일반 행정팀은 직원 수만큼(10~15명)
+                multiplier = 1.5 if "소프트웨어" in dept_name or "공학" in dept_name else 0.5
+                target_total_qty = int(random.randint(20, 40) * dept_scale * multiplier)
+                
+            # --- 가구/비품 (대량) ---
+            elif item_name in ["책상", "작업용의자", "책걸상"]:
+                # 강의실 포함
+                target_total_qty = int(random.randint(30, 60) * dept_scale)
+
+            # --- 고가 장비 (소량) ---
+            elif item_name in ["인터랙티브화이트보드", "서버", "네트워크시스템장비용랙"]:
+                target_total_qty = int(random.randint(1, 3) * dept_scale)
+
+            # --- 일반 비품 (적당량) ---
+            else: 
+                target_total_qty = int(random.randint(2, 5) * dept_scale)
+
+            # (2) 목표 수량을 채울 때까지 '구매 건(Batch)' 생성
+            # 핵심 변경: 1개씩 루프 돌지 않고, 덩어리(Batch)로 차감함
+            remaining_qty = target_total_qty
+            
+            while remaining_qty > 0:
+                # A. 이번 구매 건의 수량(Batch Size) 결정
+                is_bulk_purchase = False # 대량 구매 여부 플래그
+                
+                # PC/책상류는 확률적으로 대량 구매 (강의실/실습실 구축)
+                if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "책상", "작업용의자", "책걸상"]:
+                    if random.random() < 0.4: # 40% 확률로 대량 구매 프로젝트
+                        batch_size = random.randint(10, 20)
+                        is_bulk_purchase = True
+                    else:
+                        batch_size = random.randint(1, 3) # 소량 구매 (개인 지급용)
+                else:
+                    batch_size = random.randint(1, 2) # 기타 장비는 소량
+
+                # 남은 수량보다 많이 살 순 없음
+                if batch_size > remaining_qty:
+                    batch_size = remaining_qty
+                
+                # B. 최초 도입 시점 결정 (2015 ~ 2019 분산)
+                # 대량 구매끼리는 날짜가 겹치지 않게 연도 분산
+                start_year = random.randint(SIMULATION_START_YEAR, 2019)
+                start_month = random.randint(1, 12)
+                start_day = random.randint(1, 28)
+                current_date = datetime(start_year, start_month, start_day)
+
+                # C. 생애주기 루프 (최초 구매 -> 수명 종료 후 교체 구매)
+                while current_date < TODAY:
+                    
+                    # 1) 승인 상태
+                    approval_status = np.random.choice(APPROVAL_STATUSES, p=APPROVAL_RATIOS)
+                    
+                    # 과거 데이터 대기 방지
+                    if approval_status == '대기' and current_date < datetime(2024, 10, 1):
+                        approval_status = '확정'
+                    
+                    # 반려 시뮬레이션
+                    if approval_status == '반려':
+                        _create_acquisition_row(acquisition_list, current_date, item_data, dept_code, dept_name, approval_status, batch_size, is_bulk_purchase)
+                        current_date = current_date + timedelta(days=random.randint(14, 60))
+                        approval_status = '확정'
+
+                    # 2) 정리일자
+                    clear_date_str = ""
+                    if approval_status == '확정':
+                        # 대량 구매는 검수 기간이 깁니다 (7~20일)
+                        days_add = random.randint(7, 20) if is_bulk_purchase else random.randint(3, 7)
+                        c_date = current_date + timedelta(days=days_add)
+                        if c_date > TODAY: c_date = TODAY
+                        clear_date_str = c_date.strftime('%Y-%m-%d')
+                    
+                    # 3) 데이터 생성 (batch_size 그대로 전달)
+                    _create_acquisition_row(acquisition_list, current_date, item_data, dept_code, dept_name, approval_status, batch_size, is_bulk_purchase, clear_date_str)
+                    
+                    # 4) 다음 교체 시기 계산
+                    # 내용연수 + 지연(0~2년)
+                    usage_years = life_years + random.uniform(0, 2)
+                    next_purchase_date = current_date + timedelta(days=int(usage_years * 365) + random.randint(-30, 30))
+                    
+                    current_date = next_purchase_date
+                
+                # 남은 목표 수량 차감
+                remaining_qty -= batch_size
+    
+    # [NEW] 특수 물품(서버) 데이터 주입
+    _inject_special_server_data(acquisition_list)
+
+    return pd.DataFrame(acquisition_list)
+
+def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name, approval_status, quantity, is_bulk, clear_date_str=""):
+    """단일 취득 데이터 행을 생성 (수량은 외부에서 결정된 값을 사용)"""
     class_code, id_code, item_name, model_name, life_years, base_price = item_data
     
-    # -------------------------------------------------
-    # [수정] 1) 수량 결정 (품목별 대량 구매 패턴 반영)
-    # -------------------------------------------------
-    # 책상/의자류: 강의실/회의실 구축 시 대량 구매 가능성 높음
-    if "책상" in item_name or "의자" in item_name or "책걸상" in item_name:
-        # 소규모(1~5개, 70%) vs 대규모(10~50개, 30% - 강의실 등)
-        quantity = random.choices([random.randint(1, 5), random.randint(10, 50)], weights=[0.7, 0.3])[0]
-        
-    # PC: 실습실 구축 시 대량 구매 발생
-    elif "데스크톱" in item_name :
-         # 개인/연구실(1~5대, 85%) vs 실습실(20~40대, 15%)
-        quantity = random.choices([random.randint(1, 5), random.randint(20, 40)], weights=[0.85, 0.15])[0]
-        
-    # 기타 장비(프린터, 스캐너, 카메라 등): 주로 소량 구매
-    else:
-        quantity = random.randint(1, 5)
-        
-    # -------------------------------------------------
-    # [수정] 2) 금액 계산 (물가 상승 + 대량 구매 할인 + 노이즈)
-    # -------------------------------------------------
-    # 2015년 대비 연 1.5% 물가 상승 가정
+    # 1) 금액 계산 (수량 * 단가)
+    # 2015년 대비 물가 상승 반영
     years_passed = date_obj.year - 2015
     inflation_rate = 1.0 + (0.015 * years_passed)
     
-    # [Detail] 수량이 10개 이상이면 단가 5% 할인 적용 가정 (현실 반영)
+    # 대량 구매(10개 이상) 시 단가 할인 (5%)
     bulk_discount = 0.95 if quantity >= 10 else 1.0
 
-    # 최종 단가 계산
-    final_unit_price = int(base_price * inflation_rate * bulk_discount * random.uniform(0.9, 1.1))
-    final_unit_price = (final_unit_price // 1000) * 1000 # 천원 단위 절삭
+    final_unit_price = int(base_price * inflation_rate * bulk_discount * random.uniform(0.95, 1.05))
+    final_unit_price = (final_unit_price // 1000) * 1000 
     
-    # 총 취득금액
     total_amount = final_unit_price * quantity
 
-    # -------------------------------------------------
-    # 3) 비고 생성 (템플릿 활용)
-    # -------------------------------------------------
+    # 2) 비고 생성
     remark = ""
-    # 반려 시 사유
     if approval_status == '반려':
-        remark = random.choice(["예산 초과", "규격 불일치", "재고 활용 권고", "도입 타당성 부족"])
+        remark = random.choice(["예산 초과", "규격 불일치", "재고 활용 권고", "사업 타당성 재검토"])
     else:
-        # 정상 비고 (랜덤 30%)
-        if random.random() < 0.3:
-            # 품목명 매핑 시도
-            key = item_name
-            # 매핑 안되면 유사어 검색
-            if key not in REMARK_TEMPLATES_BY_CLASS:
-                if "컴퓨터" in key: key = "데스크톱컴퓨터"
-                elif "의자" in key: key = "작업용의자"
-            
-            candidates = REMARK_TEMPLATES_BY_CLASS.get(key, [])
-            if candidates:
-                remark = random.choice(candidates)
-                
-        # [Detail] 대량 구매인 경우 비고에 명시 (확률적 추가)
-        if quantity >= 10 and not remark:
-            if "컴퓨터" in item_name:
-                remark = f"실습실({random.randint(1,5)}호관) 구축용"
+        # 대량 구매인 경우 비고를 그럴싸하게 작성
+        if is_bulk:
+            if "컴퓨터" in item_name or "모니터" in item_name:
+                places = ["제1실습실", "제2실습실", "AI센터", "SW교육실", "종합설계실"]
+                remark = f"{random.choice(places)} 환경개선 기자재 확충"
             elif "책상" in item_name or "의자" in item_name:
-                remark = "강의실 환경개선 사업"
+                remark = "노후 강의실 집기 일괄 교체"
+            else:
+                remark = "학과 공용 기자재 확충"
+        else:
+            # 소량 구매는 랜덤 템플릿
+            if random.random() < 0.3:
+                key = item_name
+                if key not in REMARK_TEMPLATES_BY_CLASS:
+                    if "컴퓨터" in key: key = "데스크톱컴퓨터"
+                    elif "의자" in key: key = "작업용의자"
+                
+                candidates = REMARK_TEMPLATES_BY_CLASS.get(key, [])
+                if candidates:
+                    remark = random.choice(candidates)
 
-    # 4) 취득 구분
+    # 3) 취득 구분
     acq_method = np.random.choice(['자체구입', '자체제작', '기증'], p=[0.95, 0.02, 0.03])
 
     row = {
         'G2B_목록번호': class_code + id_code,
         'G2B_목록명': item_name,
         '물품분류코드': class_code,
-        '물품분류명': item_name, # 편의상 동일
+        '물품분류명': item_name, 
         '물품식별코드': id_code,
         '물품품목명': model_name,
         '캠퍼스': 'ERICA',
