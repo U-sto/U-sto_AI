@@ -15,9 +15,9 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 print("📂 [Phase 4] AI 학습용 데이터 전처리 시작...")
 
 # [Copilot Fix] 병합 시 필요한 컬럼 정의 (파일 누락 시 KeyError 방지용)
-COLS_RT = ['물품고유번호', '반납일자', '사유']
-COLS_DU = ['물품고유번호', '불용일자', '사유']
-COLS_DP = ['물품고유번호', '처분방식', '물품상태', '승인상태']
+COLS_RT = ['물품고유번호', '반납일자', '반납확정일자', '사유', '승인상태']
+COLS_DU = ['물품고유번호', '불용일자', '불용확정일자', '사유', '승인상태']
+COLS_DP = ['물품고유번호', '처분방식', '처분확정일자', '물품상태', '승인상태']
 
 # [Copilot Fix] 안전한 파일 로딩 함수 정의 (expected_cols 추가)
 def load_csv_safe(filename, required=False, expected_cols=None):
@@ -54,17 +54,24 @@ print(f"   - 원천 데이터 로드 완료: 운용 대장 {len(df_op)}건")
 print("   1. 생애주기 병합 (운용+반납+불용+처분)...")
 
 # (1) 운용 + 반납 (Left Join)
-# df_rt가 빈 DF여도 컬럼이 있으므로 에러 없이 병합됨
-df_merged = pd.merge(df_op, df_rt[['물품고유번호', '반납일자', '사유']], on='물품고유번호', how='left')
+# [Copilot Fix] 확정일자/승인상태 포함 및 컬럼명 충돌 방지
+df_rt_subset = df_rt[['물품고유번호', '반납일자', '반납확정일자', '사유', '승인상태']].rename(
+    columns={'승인상태': '반납승인상태'}
+)
+df_merged = pd.merge(df_op, df_rt_subset, on='물품고유번호', how='left')
 df_merged.rename(columns={'사유': '상태변화'}, inplace=True) 
 
 # (2) + 불용 (Left Join)
-df_du_subset = df_du[['물품고유번호', '불용일자', '사유']].rename(columns={'사유': '불용사유'})
+df_du_subset = df_du[['물품고유번호', '불용일자', '불용확정일자', '사유', '승인상태']].rename(
+    columns={'사유': '불용사유', '승인상태': '불용승인상태'}
+)
 df_merged = pd.merge(df_merged, df_du_subset, on='물품고유번호', how='left')
 
 # (3) + 처분 (Left Join)
-df_merged = pd.merge(df_merged, df_dp[['물품고유번호', '처분방식', '물품상태']], on='물품고유번호', how='left')
-
+df_dp_subset = df_dp[['물품고유번호', '처분방식', '처분확정일자', '물품상태', '승인상태']].rename(
+    columns={'승인상태': '처분승인상태'}
+)
+df_merged = pd.merge(df_merged, df_dp_subset, on='물품고유번호', how='left')
 # ---------------------------------------------------------
 # 2. 전처리 및 결측치 보정 (Imputation)
 # ---------------------------------------------------------
@@ -122,6 +129,9 @@ df_final['상태변화'] = df_merged['상태변화']
 df_final['불용사유'] = df_merged['불용사유']
 df_final['물품상태'] = df_merged['물품상태']
 df_final['처분방식'] = df_merged['처분방식']
+# [Copilot Fix] 학습여부 판단을 위해 병합된 승인상태/확정일자 정보를 임시로 매핑
+df_final['처분승인상태'] = df_merged['처분승인상태']
+df_final['처분확정일자'] = df_merged['처분확정일자']
 df_final['운용부서명'] = df_merged['운용부서']
 df_final['캠퍼스'] = df_merged['캠퍼스']
 df_final['기준일'] = df_merged['기준일'] # 계산용 임시 컬럼
@@ -170,8 +180,14 @@ df_final['취득월'] = df_final['취득일자'].dt.month
 
 # (3) 학습데이터여부
 # 기계적 수명이 다한 것만 학습('Y'). 단순 매각이나 현재 운용 중인 것은 예측 대상('N')
+# [Copilot Fix] 처분방식이 폐기/멸실이면서, 실제로 '확정'된 건만 학습 데이터로 사용
 is_mech_end = df_final['처분방식'].isin(['폐기', '멸실'])
-df_final['학습데이터여부'] = np.where(is_mech_end, 'Y', 'N')
+is_disposal_confirmed = (df_final['처분승인상태'] == '확정') | df_final['처분확정일자'].notna()
+
+df_final['학습데이터여부'] = np.where(is_mech_end & is_disposal_confirmed, 'Y', 'N')
+
+# 학습여부 판단 후 임시 컬럼 제거 (선택 사항, 저장 시 제외해도 됨)
+df_final.drop(columns=['처분승인상태', '처분확정일자'], inplace=True)
 
 # (4) 잔여내용연수 (보정된 내용연수 사용)
 df_final['잔여내용연수'] = (df_final['내용연수'] - df_final['운용연차']).round(2)

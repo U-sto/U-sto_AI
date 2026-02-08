@@ -26,11 +26,18 @@ def safe_read_csv(file_path):
 
 try:
     # Phase 2 결과물
-    df_op = pd.read_csv(os.path.join(LOAD_DIR, '04_01_operation_master.csv'))
-    df_rt = pd.read_csv(os.path.join(LOAD_DIR, '04_03_return_list.csv'))
-    df_du = pd.read_csv(os.path.join(LOAD_DIR, '05_01_disuse_list.csv'))
-    df_dp = pd.read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))
-    df_hist = pd.read_csv(os.path.join(LOAD_DIR, '99_asset_status_history.csv'))
+    df_op = safe_read_csv(os.path.join(LOAD_DIR, '04_01_operation_master.csv'))
+    df_rt = safe_read_csv(os.path.join(LOAD_DIR, '04_03_return_list.csv'))
+    df_du = safe_read_csv(os.path.join(LOAD_DIR, '05_01_disuse_list.csv'))
+    df_dp = safe_read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))
+    df_hist = safe_read_csv(os.path.join(LOAD_DIR, '99_asset_status_history.csv'))
+    
+    # 운용 대장은 필수이므로 비어있으면 종료
+    if df_op.empty:
+        print("❌ 오류: '04_01_operation_master.csv' 데이터가 없거나 비어있습니다.")
+        exit()
+
+    print(f"   - 운용 마스터: {len(df_op)}건")
 
     # 리뷰어 지적 사항: 과거 부서 정보 복원을 위해 운용신청 이력 로드
     path_req = os.path.join(LOAD_DIR, '04_02_operation_req_list.csv')
