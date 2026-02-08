@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+from pandas.errors import EmptyDataError  # 에러 처리를 위해 import
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOAD_DIR = os.path.join(BASE_DIR, "data_lifecycle") # 원천 데이터
@@ -13,6 +14,15 @@ CURRENT_STATUS_END_DATE = pd.Timestamp('2099-12-31')
 # 0. 데이터 로드
 # ---------------------------------------------------------
 print("📂 [Phase 3] 원천 데이터 로드 중...")
+
+def safe_read_csv(file_path):
+    """파일이 존재하고 비어있지 않을 때만 로드, 실패 시 빈 DF 반환"""
+    if not os.path.exists(file_path):
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(file_path)
+    except EmptyDataError:
+        return pd.DataFrame()
 
 try:
     # Phase 2 결과물

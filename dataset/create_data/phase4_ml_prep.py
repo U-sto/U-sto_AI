@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import datetime
+from pandas.errors import EmptyDataError
 
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
@@ -22,14 +23,19 @@ COLS_DP = ['물품고유번호', '처분방식', '물품상태', '승인상태']
 def load_csv_safe(filename, required=False, expected_cols=None):
     filepath = os.path.join(LOAD_DIR, filename)
     if os.path.exists(filepath):
-        return pd.read_csv(filepath)
+        try:
+            return pd.read_csv(filepath)
+        except EmptyDataError:
+            # 파일은 있지만 비어있는 경우
+            if expected_cols:
+                return pd.DataFrame(columns=expected_cols)
+            return pd.DataFrame()
     else:
         if required:
             print(f"❌ 필수 데이터 파일 누락: {filename}")
             exit()
         else:
             print(f"   ⚠️ 파일 없음 (빈 DataFrame 생성): {filename}")
-            # Merge 시 컬럼이 없으면 에러가 나므로, 빈 컬럼이라도 생성해서 반환
             if expected_cols:
                 return pd.DataFrame(columns=expected_cols)
             return pd.DataFrame()
@@ -64,14 +70,39 @@ df_merged = pd.merge(df_merged, df_dp[['물품고유번호', '처분방식', '�
 # ---------------------------------------------------------
 print("   2. 결측치 보정 및 기본 필드 정리...")
 
-# [날짜 처리 및 기준일 설정]
+# [수정 2] 날짜 처리, 최종종료일 및 기준일 설정
+# 1. 현재 시점 정의 (Today)
+today = pd.to_datetime(datetime.now().date())
+
+# 2. 기본 날짜 컬럼 형변환
 date_cols = ['취득일자', '반납일자', '불용일자']
 for col in date_cols:
-    df_merged[col] = pd.to_datetime(df_merged[col], errors='coerce')
+    if col in df_merged.columns:
+        df_merged[col] = pd.to_datetime(df_merged[col], errors='coerce')
 
-# 기준일: 자산의 수명 계산 종료 시점
-today = pd.to_datetime(datetime.now().date())
-df_merged['최종종료일'] = df_merged['반납일자'].combine_first(df_merged['불용일자'])
+# 3. 확정일자 형변환 (존재하는 경우만)
+confirm_cols = ['반납확정일자', '불용확정일자', '처분확정일자']
+for col in confirm_cols:
+    if col in df_merged.columns:
+        df_merged[col] = pd.to_datetime(df_merged[col], errors='coerce')
+
+# 4. 확정일자 우선순위 로직 적용
+# (컬럼이 없으면 NaT Series 생성하여 에러 방지)
+_ret_conf = df_merged['반납확정일자'] if '반납확정일자' in df_merged.columns else pd.Series(pd.NaT, index=df_merged.index)
+_disuse_conf = df_merged['불용확정일자'] if '불용확정일자' in df_merged.columns else pd.Series(pd.NaT, index=df_merged.index)
+_disp_conf = df_merged['처분확정일자'] if '처분확정일자' in df_merged.columns else pd.Series(pd.NaT, index=df_merged.index)
+
+# 우선순위: 처분확정 > 불용확정 > 반납확정 (가장 늦은 단계의 확정일이 실제 종료 시점)
+confirmed_end_date = _disp_conf.combine_first(_disuse_conf).combine_first(_ret_conf)
+
+# 차선책: 신청일자 (반납일자 > 불용일자)
+fallback_end_date = df_merged['반납일자'].combine_first(df_merged['불용일자'])
+
+# 최종 종료일 도출: 확정일자 우선 적용, 없으면 신청일자 적용
+df_merged['최종종료일'] = confirmed_end_date.combine_first(fallback_end_date)
+
+# 5. [중요] '기준일' 컬럼 생성 (종료일이 없으면 오늘 날짜 기준)
+# 이 컬럼이 생성되어야 뒤쪽의 파생변수(운용연차 등) 계산이 가능합니다.
 df_merged['기준일'] = df_merged['최종종료일'].fillna(today)
 
 # [DataFrame 초기화] 정의서 순서대로 데이터 구성

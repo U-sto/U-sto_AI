@@ -254,13 +254,14 @@ def step_operation_req(ctx):
     ctx['curr_status'] = '운용'
     
     # 운용대장 업데이트 (메모리 상)
-    df_operation.at[ctx['idx'], '운용상태'] = '운용'
-    df_operation.at[ctx['idx'], '운용부서'] = ctx['curr_dept_name']
-    df_operation.at[ctx['idx'], '운용부서코드'] = ctx['curr_dept_code']
-    df_operation.at[ctx['idx'], '운용확정일자'] = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
+    ctx['df_operation'].at[ctx['idx'], '운용상태'] = '운용'
+    ctx['df_operation'].at[ctx['idx'], '운용부서'] = ctx['curr_dept_name']
+    ctx['df_operation'].at[ctx['idx'], '운용부서코드'] = ctx['curr_dept_code']
+    ctx['df_operation'].at[ctx['idx'], '운용확정일자'] = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
     
-    if ctx['loop_count'] == 1:
-        df_operation.at[ctx['idx'], '출력상태'] = np.random.choice(['출력', '미출력'], p=PROBS_PRINT_STATUS)
+    # 최초 운용 시(0회차)에 출력 상태 결정
+    if ctx['loop_count'] == 0:
+        ctx['df_operation'].at[ctx['idx'], '출력상태'] = np.random.choice(['출력', '미출력'], p=PROBS_PRINT_STATUS)
 
     # 이력 추가
     add_history(asset_id, confirm_date.strftime('%Y-%m-%d'), ctx['prev_status'], '운용', f'{req_type} 승인 및 사용 시작')
@@ -582,7 +583,8 @@ for row in df_operation.itertuples():
             'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
             '물품고유번호': ctx['asset_id'], 
             '취득일자': row.취득일자, '취득금액': row.취득금액,
-            '운용부서': row.운용부서, '사용자': row.비고, '신청구분': '신규운용'
+            '운용부서': row.운용부서, '사용자': row.비고, '신청구분': '신규운용',
+            '운용상태': '운용'  # [Fix] 누락된 키 추가
         })
 
         # 운용대장 업데이트 (메모리)
@@ -689,11 +691,38 @@ for row in df_operation.itertuples():
 # ---------------------------------------------------------
 print("💾 [Phase 2] 결과 저장 중...")
 
-df_op_req = pd.DataFrame(results['req'])
-df_return = pd.DataFrame(results['return'])
-df_disuse = pd.DataFrame(results['disuse'])
-df_disposal = pd.DataFrame(results['disposal'])
-df_history = pd.DataFrame(results['history'])
+# 각 CSV별 컬럼 정의 (빈 결과가 나와도 헤더를 유지하기 위함)
+COLS_REQ = [
+    '운용신청일자', '등록일자', '운용확정일자', '등록자ID', '등록자명', '승인상태',
+    'G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '운용부서', 
+    '사용자', '신청구분', '운용상태'
+]
+COLS_RETURN = [
+    '반납일자', '반납확정일자', '등록자ID', '등록자명', '승인상태', 'G2B_목록번호', 
+    'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '정리일자', '운용부서', 
+    '운용상태', '물품상태', '사유'
+]
+COLS_DISUSE = [
+    '불용일자', '불용확정일자', '등록자ID', '등록자명', '승인상태', 'G2B_목록번호',
+    'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '정리일자', '운용부서',
+    '운용상태', '내용연수', '물품상태', '사유'
+]
+COLS_DISPOSAL = [
+    '처분일자', '처분확정일자', '처분정리구분', '등록자ID', '등록자명', '승인상태',
+    'G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '처분방식',
+    '물품상태', '사유', '불용일자', '내용연수', '정리일자'
+]
+COLS_HISTORY = [
+    '물품고유번호', '변경일자', '(이전)운용상태', '(변경)운용상태', '사유', 
+    '관리자명', '관리자ID', '등록자명', '등록자ID'
+]
+
+# 데이터프레임 생성 시 columns 명시
+df_op_req = pd.DataFrame(results['req'], columns=COLS_REQ)
+df_return = pd.DataFrame(results['return'], columns=COLS_RETURN)
+df_disuse = pd.DataFrame(results['disuse'], columns=COLS_DISUSE)
+df_disposal = pd.DataFrame(results['disposal'], columns=COLS_DISPOSAL)
+df_history = pd.DataFrame(results['history'], columns=COLS_HISTORY)
 
 cols_operation = [
     'G2B_목록번호', 'G2B_목록명', '물품고유번호', '캠퍼스','취득일자', '취득금액', '정리일자', 
