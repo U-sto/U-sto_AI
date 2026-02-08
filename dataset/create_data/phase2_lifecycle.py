@@ -279,20 +279,14 @@ def step_determine_event(ctx):
 
     event_date = TODAY + timedelta(days=1)
     # -----------------------------------------------------------
-    # 1. [직권불용] 행정적 강제 처분 (내용연수 + 1년)
-    # -----------------------------------------------------------
-    limit_admin = ctx.get('force_disuse_days', 365*6) # 기본값 안전장치
-    if age_days >= limit_admin:
-        return '직권불용', sim_date # 즉시 불용 처리
-    # -----------------------------------------------------------
-    # 2. [불용신청] 현실 수명 도달 -> 물리적 한계로 인한 사용자 불용 신청
+    # 1. [불용신청] 현실 수명 도달 -> 물리적 한계로 인한 사용자 불용 신청
     # -----------------------------------------------------------
     limit_real = ctx.get('assigned_limit_days', 365*5)
     
     if age_days >= limit_real:
         return '불용신청', sim_date
     # -----------------------------------------------------------
-    # 3. [반납] 업무적 사유(사업종료, 잉여 등)에 의한 랜덤 발생
+    # 2. [반납] 업무적 사유(사업종료, 잉여 등)에 의한 랜덤 발생
     # -----------------------------------------------------------
     # 확률 체크 (기존 로직 활용)
     is_return_triggered = False
@@ -395,13 +389,8 @@ def step_process_return(ctx, event_date):
 
 def step_process_disuse(ctx, trigger_event, inherited_reason=None):
     """C-2. 불용 및 처분 처리"""
-    # 1. 불용 사유 및 상태 결정
-    if trigger_event == '직권불용':
-        reason = '직권 불용(내용연수 초과)'
-        condition = '폐품'
-        prev_stat = '운용'
-        
-    elif trigger_event == '불용신청':
+    # 1. 불용 사유 및 상태 결정    
+    if trigger_event == '불용신청':
         # [NEW] 현실 수명이 다해서 오는 경우 -> 물리적 사유 선택
         reason = random.choice(REASONS_PHYSICAL_END)
         condition = '폐품' if reason in ['고장/파손'] else '불용품'
@@ -568,7 +557,6 @@ for row in df_operation.itertuples():
         'loop_count': 0,
         'df_operation': df_operation,
         'assigned_limit_days': assigned_limit_days,  # <--- 현실 수명 할당
-        'force_disuse_days': (row.내용연수 + 1) * 365 # <--- 직권불용 기준(내용연수+1년)
     }
     # 1. 취득 이력 생성
     add_history(ctx['asset_id'], ctx['clear_date_str'], '-', '취득', '신규 취득')
@@ -694,12 +682,6 @@ for row in df_operation.itertuples():
         elif event_type == '불용신청':
             ctx['sim_cursor_date'] = event_date
             step_process_disuse(ctx, '불용신청')
-            break
-
-        # C-3. 직권 불용 (행정적 만료)
-        elif event_type == '직권불용':
-            ctx['sim_cursor_date'] = event_date
-            step_process_disuse(ctx, '직권불용')
             break
 
 # ---------------------------------------------------------
