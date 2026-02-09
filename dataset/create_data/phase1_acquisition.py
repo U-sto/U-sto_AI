@@ -14,7 +14,7 @@ SAVE_DIR = os.path.join(BASE_DIR, "data_lifecycle")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # 시뮬레이션 설정
-SIMULATION_START_YEAR = 2015
+SIMULATION_START_YEAR = 2005
 TODAY = datetime.now()
 
 # 승인 상태 비율 설정 (확정 97%, 대기 2%, 반려 1%)
@@ -49,7 +49,7 @@ REMARK_TEMPLATES_BY_CLASS = {
     "인터랙티브화이트보드": ["스마트 강의실 구축", "디지털 강의 환경 개선"],
     
     # 신규 품목
-    "복사기": ["보안 문서 파기용", "사무실 비치용"],
+    "다기능복사기": ["보안 문서 파기용", "사무실 비치용"],
     "디지털카메라": ["홍보팀 촬영 지원", "현장 기록용", "행사 기록용"],
     "공기청정기": ["사무실 환경 개선", "강의실 미세먼지 관리"],
 }

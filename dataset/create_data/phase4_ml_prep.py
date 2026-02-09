@@ -3,6 +3,7 @@ import numpy as np
 import os
 from datetime import datetime
 from pandas.errors import EmptyDataError
+from sklearn.preprocessing import LabelEncoder # [추가] 인코딩용 라이브러리
 
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
@@ -240,6 +241,36 @@ df_final['리드타임등급'] = df_final['취득금액'].apply(get_lead_time_gr
 
 # (10) 장비중요도 - [계산된 민감도, 리드타임등급 사용]
 df_final['장비중요도'] = ((df_final['가격민감도'] * 0.7) + ((df_final['리드타임등급'] * 0.5) * 0.3)).round(2)
+# ... (기존 장비중요도 계산 코드 아래에 이어짐) ...
+
+# ---------------------------------------------------------
+# [Phase 4-1] 추가 피처 엔지니어링 및 인코딩
+# ---------------------------------------------------------
+print("   > [4-1] 타겟 레이블링 및 범주형 데이터 수치화 수행...")
+
+# (11) 타겟 데이터(Y) 생성: '실제수명' (Total Lifespan)
+# 학습용 데이터(Y)인 경우, 이미 수명이 끝났으므로 '운용연차'가 곧 '실제수명'이 됨
+# 예측용 데이터(N)인 경우, 아직 수명을 모르므로 NaN 처리
+df_final['실제수명'] = np.nan
+mask_train = df_final['학습데이터여부'] == 'Y'
+df_final.loc[mask_train, '실제수명'] = df_final.loc[mask_train, '운용연차']
+
+# (12) 범주형 데이터 수치화 (Label Encoding)
+# 모델 학습을 위해 텍스트(String) 데이터를 숫자(Code)로 변환
+categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스', '처분방식', '상태변화']
+
+for col in categorical_cols:
+    le = LabelEncoder()
+    # 결측치는 'Unknown'으로 채운 후 인코딩 (안전장치)
+    df_final[col] = df_final[col].fillna('Unknown').astype(str)
+    
+    # 원본 컬럼은 유지하고, '_Code' 붙은 수치화 컬럼 생성
+    # 예: G2B목록명(노트북) -> G2B목록명_Code(0), 데스크톱(1)...
+    df_final[f'{col}_Code'] = le.fit_transform(df_final[col])
+
+    # (옵션) 인코딩 매핑 정보 출력 (확인용)
+    # mapping = dict(zip(le.classes_, le.transform(le.classes_)))
+    # print(f"     - {col} 매핑 완료 ({len(mapping)}개)")
 
 # --- C. 예측값/결과값 (Placeholder) ---
 df_final['실제잔여수명'] = np.nan 
@@ -251,6 +282,9 @@ df_final['AI예측고장일'] = pd.NaT
 df_final['안전버퍼'] = 0.0
 df_final['권장발주일'] = pd.NaT
 df_final['예측실행일자'] = today.strftime('%Y-%m-%d')
+# 실제잔여수명: 학습 데이터는 0(이미 종료됨), 예측 데이터는 미지수
+df_final['실제잔여수명'] = 0.0 
+df_final['예측잔여수명'] = np.nan
 
 # ---------------------------------------------------------
 # 4. 이상치 제거 (Outlier Removal)
@@ -304,14 +338,26 @@ print(f"   - Test  (10%) : {len(test_set)}건")
 print(f"   - Pred  (운용) : {len(df_pred_source)}건")
 
 # 최종 저장
+# 최종 저장 컬럼 리스트 업데이트
 output_cols = [
+    # 식별 및 원본 정보
     '물품고유번호', 'G2B목록명', '물품분류명', '내용연수', '취득금액', '운용부서코드', 
     '취득일자', '반납일자', '불용일자', '상태변화', '불용사유', '물품상태', 
     '처분방식', '운용부서명', '캠퍼스',
-    '운용연차', '학습데이터여부', '잔여내용연수', '부서가혹도', '누적사용부하', 
-    '고장임박도', '가격민감도', '장비중요도', '리드타임등급',
+    
+    # 핵심 Feature (학습 Feature)
+    '운용연차', '잔여내용연수', '부서가혹도', '누적사용부하', 
+    '고장임박도', '가격민감도', '장비중요도', '리드타임등급', '운용월수', '취득월',
+    
+    # [NEW] 인코딩된 범주형 Feature (모델 입력용)
+    'G2B목록명_Code', '물품분류명_Code', '운용부서코드_Code', '캠퍼스_Code', '처분방식_Code', '상태변화_Code',
+    
+    # Target (정답지) 및 구분
+    '학습데이터여부', '데이터세트구분', '실제수명', 
+    
+    # 예측 결과 Placeholder
     '실제잔여수명', '예측잔여수명', '(월별)고장예상수량', '안전재고', '필요수량', 
-    'AI예측고장일', '안전버퍼', '권장발주일', '예측실행일자', '데이터세트구분', '운용월수', '취득월'
+    'AI예측고장일', '안전버퍼', '권장발주일', '예측실행일자'
 ]
 
 df_export = df_final.reindex(columns=output_cols)
