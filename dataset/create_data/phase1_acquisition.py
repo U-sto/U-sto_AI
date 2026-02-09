@@ -70,7 +70,7 @@ G2B_MASTER_DATA = [
     ("43222609", "23908131", "네트워크라우터", "43222609 네트워크라우터", 9, 542000),
     ("43201803", "23809899", "하드디스크드라이브", "하드디스크드라이브, Hitachi vantara, (US)R2H-H10RSS, 10TB", 7, 5340000),
     ("43223308", "22060848", "네트워크시스템장비용랙", "네트워크시스템장비용랙, 600×2000×750mm", 10, 891700),
-    ("52161505", "23551001", "텔레비전", "스마트TV, 삼성, 75인치 UHD, 회의실용", 7, 1850000), # [NEW] 회의실용 TV
+    ("52161505", "23860502", "텔레비전", "텔레비전, 삼성전자, (VN)KU55UT7000FXKR, UHD, 138cm", 9, 1420000), # [NEW] 회의실용 TV
     
     # =========================
     # 사무·교육·가구 (7)
@@ -80,8 +80,8 @@ G2B_MASTER_DATA = [
     ("56112108", "24917370", "책상용콤비의자", "책걸상, 애니체, AMD-WT100A, 617×790×850mm", 10, 465000),
     ("56121798", "25616834", "칠판보조장", "칠판보조장, 우드림, WR-BSC7040, 7000×300×3000mm", 7, 10500000),
     ("44111911", "25460962", "인터랙티브화이트보드및액세서리", "인터랙티브화이트보드, 미래디스플레이, MDI86110, 279.4cm, IR센서/손/도구/LED", 7, 24200000),
-    ("56101501", "22881234", "소파", "응접용 소파, 3인용, 인조가죽", 9, 650000), # [NEW] 휴게실용
-    ("56101712", "23441001", "회의용탁자", "회의테이블, 2400x1200, 8인용", 9, 550000), # [NEW] 회의실용
+    ("56101502", "22528723", "소파", "소파, 더 코알라, KAL-A04, 1850×820×920mm", 8, 787000), # [NEW] 휴게실용
+    ("56101706", "22575869", "회의용탁자", "회의용탁자, 아모스아인스가구, ACT-500, 1600×700×750mm", 9, 830000), # [NEW] 회의실용
 
     # =========================
     # [NEW] 소형/기타 전자기기 (데이터 희석용)
@@ -89,7 +89,7 @@ G2B_MASTER_DATA = [
     ("45121504", "25468676", "디지털카메라", "디지털카메라, Nikon, (TH)Z6 III, 2450만화소", 8, 2980000),
     ("44101503", "25652906", "다기능복사기", "다기능복사기, Brother, (PH)DCP-T830DW, A4/흑백17/컬러16.5ipm", 8, 450000),
     ("40161602", "25676461", "공기청정기", "공기청정기, 엘지전자, AS235DWSP, 74.7㎡, 51W", 9, 840000),
-    ("41103023", "22451001", "실험실용냉장고", "시약장, 500L, 잠금장치 포함", 8, 1200000), # [NEW] 자연대/공대용
+    ("56122002", "22443915", "실험실용보관장또는보조용품", "실험기구진열장, 스마일가구, SM-423, 800×600×800mm", 11, 248100), # [NEW] 자연대/공대용
 ]
 
 # [NEW] 특수 목적 물품 (별도 로직 적용)
@@ -134,37 +134,51 @@ def generate_acquisition_data_lifecycle():
             target_total_qty = 0
             
             # --- A. 핵심 IT 장비 (PC, 모니터) ---
-            if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "액정모니터"]:
+            if item_name in ["노트북컴퓨터", "데스크톱컴퓨터"]:
                 # SW/공대는 실습실 수요로 인해 일반 행정팀보다 훨씬 많음
-                multiplier = 1.0 if "소프트웨어" in dept_name or "공학" in dept_name else 0.6
-                # (예: SW대학=30대, 학생팀=18대)
+                multiplier = 1.5 if "소프트웨어" in dept_name or "공학" or "공과" in dept_name in dept_name else 0.7
+                # (예: SW대학=45대, 학생팀=21대)
                 target_total_qty = int(random.randint(20, 40) * dept_scale * multiplier)
-                
+            
+            # --- IT 장비 (모니터) ---
+            elif item_name == "액정모니터":
+                # 데스크톱은 필수지만, 노트북 사용자는 모니터 안 쓰는 경우도 많음.
+                # PC 수량(20~40) 대비 60~70% 수준으로만 잡히도록 범위 대폭 축소
+                target_total_qty = int(random.randint(10,20) * dept_scale)
+
             # --- B. 사무 주변기기 (프린터, 스캐너, 공기청정기 등) ---
-            elif item_name in ["레이저프린터", "스캐너", "다기능복사기", "공기청정기", "세단기"]:
+            elif item_name in ["레이저프린터", "스캐너", "다기능복사기", "공기청정기", "세단기", "텔레비전"]:
                 # 부서 규모에 따라 2~5대 수준 보유
-                target_total_qty = int(random.randint(2, 4) * dept_scale)
+                target_total_qty = int(random.randint(2, 5) * dept_scale)
                 
             # --- C. 네트워크/인프라 장비 (특수 부서용) ---
             elif item_name in ["네트워크라우터", "네트워크시스템장비용랙", "하드디스크드라이브", "허브", "플래시메모리저장장치"]:
-                # 시설팀, SW, 공대 위주 보유 (나머지 부서는 0~1개)
+                # 시설팀, SW, 공대 위주 보유 (나머지 부서는 0~2개)
                 if "시설" in dept_name or "소프트웨어" in dept_name or "공학" in dept_name:
-                    target_total_qty = int(random.randint(3, 8) * dept_scale)
+                    target_total_qty = int(random.randint(4, 10) * dept_scale)
                 else:
-                    target_total_qty = int(random.randint(0, 1))
+                    target_total_qty = int(random.randint(0, 2))
 
             # --- D. 가구/강의실 비품 (대량) ---
-            elif item_name in ["책상", "작업용의자", "책걸상"]:
+            elif item_name in ["책상", "작업용의자", "책걸상", "회의용탁자", "서랍형수납장", "소파"]:
                 # 인원수 + 강의실/회의실 수요 (30~60개)
                 target_total_qty = int(random.randint(30, 60) * dept_scale)
 
             # --- E. 고가/특수 교육 기자재 ---
             elif item_name in ["인터랙티브화이트보드", "칠판보조장"]:
                 target_total_qty = int(random.randint(1, 3) * dept_scale)
+            
+            # --- F. 실험/연구 장비 (특수) [NEW] ---
+            elif item_name in ["실험실용보관장또는보조용품"]:
+                # 자연대, 공대만 보유
+                if "자연과학" in dept_name or "공학" in dept_name or "공과" in dept_name:
+                    target_total_qty = int(random.randint(5, 8) * dept_scale)
+                else:
+                    target_total_qty = 0
 
-            # --- F. 기타 (카메라 등) ---
+            # --- G. 기타 (카메라 등) ---
             else: 
-                target_total_qty = int(random.randint(0, 2) * dept_scale)
+                target_total_qty = int(random.randint(1, 3) * dept_scale)
 
             # (2) 목표 수량을 채울 때까지 '구매 건(Batch)' 생성
             remaining_qty = target_total_qty
@@ -174,7 +188,7 @@ def generate_acquisition_data_lifecycle():
                 is_bulk_purchase = False 
                 
                 # 1) 대량 구매 가능 품목 (PC, 가구)
-                if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "책상", "작업용의자", "책걸상"]:
+                if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "책상", "작업용의자", "책걸상","액정모니터"]:
                     # 30% 확률로 강의실/실습실 구축용 대량 구매 (10~20개)
                     if remaining_qty >= 10 and random.random() < 0.3:
                         batch_size = random.randint(10, 20)
@@ -187,8 +201,12 @@ def generate_acquisition_data_lifecycle():
                 elif item_name in ["네트워크라우터", "네트워크시스템장비용랙", "하드디스크드라이브"]:
                      # 인프라 구축 시 2~4개씩 살 수 있음
                      batch_size = random.randint(1, 4)
+                
+                # 3) 중소규모 품목 (실험장비 등)
+                elif item_name in ["실험실용보관장또는보조용품", "네트워크라우터"]:
+                     batch_size = random.randint(1, 5)
                      
-                # 3) 그 외 단일 품목 (프린터, 카메라 등)
+                # 4) 그 외 단일 품목 (프린터, 카메라 등)
                 else:
                     batch_size = 1
 
@@ -196,9 +214,9 @@ def generate_acquisition_data_lifecycle():
                 if batch_size > remaining_qty:
                     batch_size = remaining_qty
 
-                # B. 최초 도입 시점 결정 (2015 ~ 2019 분산)
+                # B. 최초 도입 시점 결정 (2005~2009 분산)
                 # 대량 구매끼리는 날짜가 겹치지 않게 연도 분산
-                start_year = random.randint(SIMULATION_START_YEAR, 2019)
+                start_year = random.randint(SIMULATION_START_YEAR, 2009)
                 start_month = random.randint(1, 12)
                 start_day = random.randint(1, 28)
                 current_date = datetime(start_year, start_month, start_day)
@@ -380,10 +398,12 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
         # 대량 구매인 경우 비고를 그럴싸하게 작성
         if is_bulk:
             if "컴퓨터" in item_name or "모니터" in item_name:
-                places = ["제1실습실", "제2실습실", "AI센터", "SW교육실", "종합설계실"]
+                places = ["제1실습실", "제2실습실", "AI센터", "종합설계실", "미디어실", "기초실험실"]
                 remark = f"{random.choice(places)} 환경개선 기자재 확충"
             elif "책상" in item_name or "의자" in item_name:
                 remark = "노후 강의실 집기 일괄 교체"
+            elif "실험" in item_name:
+                remark = "기초과학 실험실습 기자재 확충"
             else:
                 remark = "학과 공용 기자재 확충"
         else:
@@ -393,6 +413,7 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
                 if key not in REMARK_TEMPLATES_BY_CLASS:
                     if "컴퓨터" in key: key = "데스크톱컴퓨터"
                     elif "의자" in key: key = "작업용의자"
+                    elif "실험" in key: key = "실험실용보관장또는보조용품" # 템플릿 없으면 기본값 사용
                 
                 candidates = REMARK_TEMPLATES_BY_CLASS.get(key, [])
                 if candidates:
@@ -401,6 +422,9 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
     # 3) 취득 구분
     acq_method = np.random.choice(['자체구입', '자체제작', '기증'], p=[0.95, 0.02, 0.03])
 
+    # 캠퍼스 결정 로직
+    campus_val = '서울' if '(서울)' in dept_name else 'ERICA'
+
     row = {
         'G2B_목록번호': class_code + id_code,
         'G2B_목록명': item_name,
@@ -408,7 +432,7 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
         '물품분류명': item_name, 
         '물품식별코드': id_code,
         '물품품목명': model_name,
-        '캠퍼스': 'ERICA',
+        '캠퍼스': campus_val, # 기존 고정값 ERICA 대신 변수 사용
         '취득일자': date_obj.strftime('%Y-%m-%d'),
         '취득금액': total_amount,
         '정리일자': clear_date_str,
@@ -433,7 +457,9 @@ def _inject_special_server_data(data_list):
     # 서버 할당 시나리오 (시설팀 2대, 학생팀 1대)
     allocations = [
         ("A351", "시설팀(ERICA)", 2),
-        ("A320", "학생지원팀(ERICA)", 1)
+        ("A320", "학생지원팀(ERICA)", 1),
+        ("C182", "공과대학RC행정팀(서울)", 2), # [NEW] 서울 공대 서버
+        ("A124", "학생지원팀(서울)", 1)       # [NEW] 서울 학생팀 서버
     ]
 
     for dept_code, dept_name, qty in allocations:
