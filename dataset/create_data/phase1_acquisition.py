@@ -123,16 +123,24 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
     """단일 취득 데이터 행을 생성 (수량은 외부에서 결정된 값을 사용)"""
     class_code, id_code, item_name, model_name, life_years, base_price = item_data
     
-    # 1) 금액 계산 (수량 * 단가)
-    # 2005년 대비 물가 상승 반영
-    years_passed = date_obj.year - 2005
-    inflation_rate = 1.0 + (0.015 * years_passed)
+    # ---------------------------------------------------------
+    # [수정] 금액 계산 (과거로 갈수록 저렴하게 역산)
+    # 현재 데이터(base_price)는 2026년 기준임
+    # ---------------------------------------------------------
+    # 2026년과 취득일자의 연도 차이 (예: 2005년이면 21년 차이)
+    years_diff = 2026 - date_obj.year
+    
+    # 3년에 1.5% 물가 상승 가정 -> 과거로 갈수록 할인 (Discount)
+    # 공식: 과거가격 = 현재가격 / (1.015 ^ 경과년수)
+    deflation_factor = (1.015) ** years_diff/3
+    historical_price = base_price / deflation_factor
     
     # 대량 구매(10개 이상) 시 단가 할인 (5%)
     bulk_discount = 0.95 if quantity >= 10 else 1.0
 
-    final_unit_price = int(base_price * inflation_rate * bulk_discount * random.uniform(0.95, 1.05))
-    final_unit_price = (final_unit_price // 1000) * 1000 
+    # 최종 단가 (노이즈 추가)
+    final_unit_price = int(historical_price * bulk_discount * random.uniform(0.95, 1.05))
+    final_unit_price = (final_unit_price // 1000) * 1000 # 천원 단위 절삭
     
     total_amount = final_unit_price * quantity
 
@@ -258,8 +266,8 @@ def generate_acquisition_data_lifecycle():
             # --- A. 핵심 IT 장비 (PC, 모니터) ---
             if item_name in ["노트북컴퓨터", "데스크톱컴퓨터"]:
                 # SW/공대는 실습실 수요로 인해 일반 행정팀보다 훨씬 많음
-                multiplier = 1.5 if "소프트웨어" in dept_name or "공학" or "공과" in dept_name in dept_name else 0.7
-                # (예: SW대학=45대, 학생팀=21대)
+                multiplier = 1.2 if "소프트웨어" in dept_name or "공학" or "공과" in dept_name in dept_name else 0.7
+                # (예: SW대학=36대, 학생팀=21대)
                 target_total_qty = int(random.randint(20, 40) * dept_scale * multiplier)
             
             # --- IT 장비 (모니터) ---
@@ -281,19 +289,22 @@ def generate_acquisition_data_lifecycle():
                     target_total_qty = int(random.randint(0, 2))
 
             # --- D. 가구/강의실 비품 (대량) ---
-            elif item_name in ["책상", "작업용의자", "책걸상", "회의용탁자", "서랍형수납장", "소파"]:
+            elif item_name in ["책상", "작업용의자", "책걸상", "회의용탁자", "서랍형수납장"]:
                 # 인원수 + 강의실/회의실 수요 (30~60개)
                 target_total_qty = int(random.randint(30, 60) * dept_scale)
+            # --- 소파 ---
+            elif item_name in ["소파"]:
+                target_total_qty = int(random.randint(10, 20) * dept_scale)
 
             # --- E. 고가/특수 교육 기자재 ---
             elif item_name in ["인터랙티브화이트보드", "칠판보조장"]:
-                target_total_qty = int(random.randint(1, 3) * dept_scale)
+                target_total_qty = int(random.randint(7, 10) * dept_scale)
             
             # --- F. 실험/연구 장비 (특수) [NEW] ---
             elif item_name in ["실험실용보관장또는보조용품"]:
                 # 자연대, 공대만 보유
                 if "자연과학" in dept_name or "공학" in dept_name or "공과" in dept_name:
-                    target_total_qty = int(random.randint(5, 8) * dept_scale)
+                    target_total_qty = int(random.randint(15, 20) * dept_scale)
                 else:
                     target_total_qty = 0
 
@@ -309,7 +320,7 @@ def generate_acquisition_data_lifecycle():
                 is_bulk_purchase = False 
                 
                 # 1) 대량 구매 가능 품목 (PC, 가구)
-                if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "책상", "작업용의자", "책걸상","액정모니터"]:
+                if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "책상", "책상용콤비의자","작업용의자", "책걸상","액정모니터", "회의용탁자", "서랍형수납장"]:
                     # 30% 확률로 강의실/실습실 구축용 대량 구매 (10~20개)
                     if remaining_qty >= 10 and random.random() < 0.3:
                         batch_size = random.randint(10, 20)
@@ -319,12 +330,12 @@ def generate_acquisition_data_lifecycle():
                         batch_size = random.randint(1, 3)
                         
                 # 2) 네트워크/주변기기 (소량 묶음)
-                elif item_name in ["네트워크라우터", "네트워크시스템장비용랙", "하드디스크드라이브"]:
+                elif item_name in ["네트워크라우터", "네트워크시스템장비용랙", "하드디스크드라이브", "네트워크라우터", "텔레비전"]:
                      # 인프라 구축 시 2~4개씩 살 수 있음
-                     batch_size = random.randint(1, 4)
+                     batch_size = random.randint(2, 4)
                 
-                # 3) 중소규모 품목 (실험장비 등)
-                elif item_name in ["실험실용보관장또는보조용품", "네트워크라우터"]:
+                # 3) 중소규모 품목 
+                elif item_name in ["실험실용보관장또는보조용품", "소파", "칠판보조장", "인터랙티브화이트보드", "인터랙티브화이트보드및액세서리", "디지털카메라"]:
                      batch_size = random.randint(1, 5)
                      
                 # 4) 그 외 단일 품목 (프린터, 카메라 등)
