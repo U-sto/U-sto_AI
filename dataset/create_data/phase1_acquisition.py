@@ -8,14 +8,24 @@ from datetime import datetime, timedelta
 # ---------------------------------------------------------
 # 0. 설정 및 초기화
 # ---------------------------------------------------------
+# [Professor Fix 1] 실행 시점 고정 (Data Leakage 방지)
+FIXED_TODAY_STR = "2024-12-31"
+FIXED_TODAY = datetime.strptime(FIXED_TODAY_STR, "%Y-%m-%d")
+TODAY = FIXED_TODAY 
+
+# [Professor Fix 1] 랜덤 시드 고정
+SEED_VAL = 42
+random.seed(SEED_VAL)
+np.random.seed(SEED_VAL)
+Faker.seed(SEED_VAL)
 fake = Faker('ko_KR')
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SAVE_DIR = os.path.join(BASE_DIR, "data_lifecycle")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # 시뮬레이션 설정
 SIMULATION_START_YEAR = 2005
-TODAY = datetime.now()
 
 # 승인 상태 비율 설정 (확정 97%, 대기 2%, 반려 1%)
 APPROVAL_RATIOS = [0.97, 0.02, 0.01]
@@ -127,8 +137,10 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
     # [수정] 금액 계산 (과거로 갈수록 저렴하게 역산)
     # 현재 데이터(base_price)는 2026년 기준임
     # ---------------------------------------------------------
-    # 2026년과 취득일자의 연도 차이 (예: 2005년이면 21년 차이)
-    years_diff = 2026 - date_obj.year
+    # 1) 금액 계산 (과거로 갈수록 저렴하게 역산)
+    # 기준년도(2026 -> FIXED_TODAY 연도)와의 차이
+    current_std_year = 2026 # G2B 데이터 기준 연도
+    years_diff = current_std_year - date_obj.year
     
     # 3년에 1.5% 물가 상승 가정 -> 과거로 갈수록 할인 (Discount)
     # 공식: 과거가격 = 현재가격 / (1.015 ^ 경과년수)
