@@ -279,8 +279,8 @@ df_final.loc[mask_train, '실제수명'] = df_final.loc[mask_train, '운용연�
 # 모델 학습을 위해 텍스트(String) 데이터를 숫자(Code)로 변환
 categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스', '처분방식', '상태변화']
 
+le = LabelEncoder()
 for col in categorical_cols:
-    le = LabelEncoder()
     # 결측치는 'Unknown'으로 채운 후 인코딩 (안전장치)
     df_final[col] = df_final[col].fillna('Unknown').astype(str)
     
@@ -303,8 +303,8 @@ df_final['안전버퍼'] = 0.0
 df_final['권장발주일'] = pd.NaT
 df_final['예측실행일자'] = today.strftime('%Y-%m-%d')
 # 실제잔여수명: 학습 데이터는 0(이미 종료됨), 예측 데이터는 미지수
-df_final['실제잔여수명'] = 0.0 
-df_final['예측잔여수명'] = np.nan
+df_final.loc[df_final['학습데이터여부'] == 'Y', '실제잔여수명'] = 0.0
+# '예측잔여수명'은 277라인에서 이미 초기화되었으므로 이 라인은 제거합니다.
 
 # ---------------------------------------------------------
 # 4. 이상치 제거 (Outlier Removal)
