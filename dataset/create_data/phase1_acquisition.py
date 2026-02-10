@@ -143,8 +143,8 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
     years_diff = current_std_year - date_obj.year
     
     # 3년에 1.5% 물가 상승 가정 -> 과거로 갈수록 할인 (Discount)
-    # 공식: 과거가격 = 현재가격 / (1.015 ^ 경과년수)
-    deflation_factor = (1.015) ** years_diff/3
+    # 공식: 과거가격 = 현재가격 / (1.015 ^ (경과년수/3))
+    deflation_factor = (1.015) ** (years_diff / 3)
     historical_price = base_price / deflation_factor
     
     # 대량 구매(10개 이상) 시 단가 할인 (5%)
@@ -239,6 +239,8 @@ def _inject_special_server_data(data_list):
             # 정리일자 (도입 기간 김)
             clear_date = acq_date + timedelta(days=random.randint(14, 45))
             
+            campus_val = '서울' if '(서울)' in dept_name else 'ERICA'
+            
             row = {
                 'G2B_목록번호': sv_full_code,
                 'G2B_목록명': sv_item_name,
@@ -246,7 +248,7 @@ def _inject_special_server_data(data_list):
                 '물품분류명': sv_item_name,
                 '물품식별코드': sv_id_code,
                 '물품품목명': sv_model_name,
-                '캠퍼스': 'ERICA',
+                '캠퍼스': campus_val, # 캠퍼스 결정 로직 재사용
                 '취득일자': acq_date.strftime('%Y-%m-%d'),
                 '취득금액': sv_price,
                 '정리일자': clear_date.strftime('%Y-%m-%d'),
@@ -278,7 +280,9 @@ def generate_acquisition_data_lifecycle():
             # --- A. 핵심 IT 장비 (PC, 모니터) ---
             if item_name in ["노트북컴퓨터", "데스크톱컴퓨터"]:
                 # SW/공대는 실습실 수요로 인해 일반 행정팀보다 훨씬 많음
-                multiplier = 1.2 if "소프트웨어" in dept_name or "공학" or "공과" in dept_name in dept_name else 0.7
+                multiplier = 1.2 if ("소프트웨어" in dept_name
+                                     or "공학" in dept_name
+                                     or "공과" in dept_name) else 0.7
                 # (예: SW대학=36대, 학생팀=21대)
                 target_total_qty = int(random.randint(20, 40) * dept_scale * multiplier)
             

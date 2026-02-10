@@ -136,15 +136,19 @@ def create_asset_ids(df: pd.DataFrame) -> pd.Series:
     # 원본 인덱스 보존 (나중에 순서대로 다시 끼워넣기 위함)
     df_temp = df.copy()
     
+    # 원본 순서를 보존하여 동률(동일 연도/부서/품목/금액)인 경우에도 결정적으로 정렬되도록 함
+    df_temp['_orig_pos'] = np.arange(len(df_temp))
+    
     # 1. 연도 추출
     df_temp['temp_year'] = pd.to_datetime(df_temp['취득일자']).dt.year
     
     # 2. [핵심] 결정적 정렬 (Deterministic Sort)
     # 데이터가 어떤 순서로 들어오든, 항상 이 기준대로 줄을 세운 뒤 번호를 매깁니다.
-    # 정렬 기준: 연도 -> 부서 -> 품목 -> 금액 (동일 조건 내에서도 순서 고정)
+    # 정렬 기준: 연도 -> 부서 -> 품목 -> 금액 -> 원본순서(타이브레이커)
     df_temp = df_temp.sort_values(
-        by=['temp_year', '운용부서코드', 'G2B_목록번호', '취득금액'],
-        ascending=[True, True, True, True]
+        by=['temp_year', '운용부서코드', 'G2B_목록번호', '취득금액', '_orig_pos'],
+        ascending=[True, True, True, True, True],
+        kind='mergesort',  # 안정 정렬 사용으로 동률일 때도 순서가 보장됨
     )
     
     # 3. 연도별 그룹핑 후 시퀀스 생성 (1, 2, 3...)
