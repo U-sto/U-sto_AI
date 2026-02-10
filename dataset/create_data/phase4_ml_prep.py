@@ -8,6 +8,10 @@ from sklearn.preprocessing import LabelEncoder # [추가] 인코딩용 라이브
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
+# [Professor Fix 1] 기준일 고정
+FIXED_TODAY_STR = "2026-2-10"
+today = pd.to_datetime(FIXED_TODAY_STR).date()
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOAD_DIR = os.path.join(BASE_DIR, "data_lifecycle")
 SAVE_DIR = os.path.join(BASE_DIR, "data_ml")
@@ -80,7 +84,9 @@ print("   2. 결측치 보정 및 기본 필드 정리...")
 
 # [수정 2] 날짜 처리, 최종종료일 및 기준일 설정
 # 1. 현재 시점 정의 (Today)
-today = pd.to_datetime(datetime.now().date())
+FIXED_TODAY_STR = "2026-2-10"
+TODAY = datetime.strptime(FIXED_TODAY_STR, "%Y-%m-%d")
+now = TODAY # 코드 내 now 변수 호환용
 
 # 2. 기본 날짜 컬럼 형변환
 date_cols = ['취득일자', '반납일자', '불용일자']
@@ -180,6 +186,10 @@ if initial_len != len(df_final):
 # ---------------------------------------------------------
 print("   3. 파생변수 생성 (보정된 데이터 기반)...")
 
+# [Fix Error] 날짜 연산 전, 명시적으로 datetime64 타입으로 변환 (형식 통일)
+df_final['기준일'] = pd.to_datetime(df_final['기준일'])
+df_final['취득일자'] = pd.to_datetime(df_final['취득일자'])
+
 # (1) 운용연차 (Years Used) & 운용월수
 days_diff = (df_final['기준일'] - df_final['취득일자']).dt.days
 # 음수 일수(미래 취득일자/기준일 역전 등) 보정: 0 미만은 0으로 clip
@@ -188,6 +198,7 @@ df_final['운용연차'] = (days_diff_clipped / 365.0).round(2)
 # 운용연차는 음수 방지를 위해 0 미만을 0으로 보정 (clip과 로직 일관성 유지)
 df_final['운용연차'] = df_final['운용연차'].apply(lambda x: x if x > 0 else 0.0)
 df_final['운용월수'] = (days_diff_clipped / 30.0).fillna(0).astype(int)
+
 # (2) 취득월 (계절성)
 df_final['취득월'] = df_final['취득일자'].dt.month
 
@@ -201,6 +212,11 @@ df_final['학습데이터여부'] = np.where(is_mech_end & is_disposal_confirmed
 
 # 학습여부 판단 후 임시 컬럼 제거 (선택 사항, 저장 시 제외해도 됨)
 df_final.drop(columns=['처분승인상태', '처분확정일자'], inplace=True)
+
+# [Professor Fix 2] Feature Leakage 주의
+# '잔여내용연수'는 (내용연수 - 운용연차)로 단순 계산되므로, 
+# 내용연수가 법적 기준일 경우 모델이 실제 고장 패턴이 아니라 법적 기준만 학습할 위험이 있음.
+# 따라서 '잔여내용연수'는 시각화용으로만 남기고, 학습 데이터(output_cols)에서는 제외하는 것을 권장.
 
 # (4) 잔여내용연수 (보정된 내용연수 사용)
 df_final['잔여내용연수'] = (df_final['내용연수'] - df_final['운용연차']).round(2)
@@ -223,6 +239,7 @@ df_final['부서가혹도'] = df_final['운용부서명'].apply(get_severity)
 df_final['누적사용부하'] = (df_final['운용연차'] * df_final['부서가혹도']).round(2)
 
 # (7) 고장임박도 (Failure Imminence) - [보정된 내용연수 사용]
+# 일단 생성은 하되, Feature Importance 분석 후 제거 고려
 ratio = df_final['운용연차'] / df_final['내용연수']
 df_final['고장임박도'] = (ratio ** 2).clip(0, 1).round(2)
 
@@ -251,6 +268,9 @@ print("   > [4-1] 타겟 레이블링 및 범주형 데이터 수치화 수행..
 # (11) 타겟 데이터(Y) 생성: '실제수명' (Total Lifespan)
 # 학습용 데이터(Y)인 경우, 이미 수명이 끝났으므로 '운용연차'가 곧 '실제수명'이 됨
 # 예측용 데이터(N)인 경우, 아직 수명을 모르므로 NaN 처리
+# [Target Definition]
+# Regression Target: '실제수명' (Total Lifespan)
+# 예측 시: 모델이 예측한 '예측_실제수명' - '현재_운용연차' = '예측_잔여수명(RUL)'
 df_final['실제수명'] = np.nan
 mask_train = df_final['학습데이터여부'] == 'Y'
 df_final.loc[mask_train, '실제수명'] = df_final.loc[mask_train, '운용연차']
@@ -338,7 +358,7 @@ print(f"   - Test  (10%) : {len(test_set)}건")
 print(f"   - Pred  (운용) : {len(df_pred_source)}건")
 
 # 최종 저장
-# 최종 저장 컬럼 리스트 업데이트
+# [Professor Fix 2] 최종 저장 컬럼 리스트 업데이트 (Leakage 변수 제외)
 output_cols = [
     # 식별 및 원본 정보
     '물품고유번호', 'G2B목록명', '물품분류명', '내용연수', '취득금액', '운용부서코드', 
@@ -346,8 +366,11 @@ output_cols = [
     '처분방식', '운용부서명', '캠퍼스',
     
     # 핵심 Feature (학습 Feature)
-    '운용연차', '잔여내용연수', '부서가혹도', '누적사용부하', 
-    '고장임박도', '가격민감도', '장비중요도', '리드타임등급', '운용월수', '취득월',
+    '운용연차', 
+    # '잔여내용연수',  <-- [제외] Leakage 위험
+    '부서가혹도', '누적사용부하', 
+    '고장임박도', # <-- (선택적 포함, 과적합 시 제외 고려)
+    '가격민감도', '장비중요도', '리드타임등급', '운용월수', '취득월',
     
     # [NEW] 인코딩된 범주형 Feature (모델 입력용)
     'G2B목록명_Code', '물품분류명_Code', '운용부서코드_Code', '캠퍼스_Code', '처분방식_Code', '상태변화_Code',

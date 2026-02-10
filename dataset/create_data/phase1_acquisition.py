@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # 0. 설정 및 초기화
 # ---------------------------------------------------------
 # [Professor Fix 1] 실행 시점 고정 (Data Leakage 방지)
-FIXED_TODAY_STR = "2024-12-31"
+FIXED_TODAY_STR = "2026-2-10"
 FIXED_TODAY = datetime.strptime(FIXED_TODAY_STR, "%Y-%m-%d")
 TODAY = FIXED_TODAY 
 
