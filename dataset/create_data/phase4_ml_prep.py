@@ -64,8 +64,13 @@ if not df_rt.empty:
     # 날짜 형변환 (정렬을 위해)
     df_rt['반납일자'] = pd.to_datetime(df_rt['반납일자'], errors='coerce')
     df_rt['반납확정일자'] = pd.to_datetime(df_rt['반납확정일자'], errors='coerce')
+    
     # 확정일 우선, 없으면 신청일 기준 내림차순 정렬 (최신 날짜가 위로)
-    df_rt = df_rt.sort_values(by=['물품고유번호', '반납확정일자', '반납일자'], ascending=[True, False, False])
+    df_rt = df_rt.sort_values(
+        by=['물품고유번호', '반납확정일자', '반납일자'], 
+        ascending=[True, False, False],
+        kind='mergesort'
+    )
     # ID별 첫 번째 행만 유지
     df_rt = df_rt.drop_duplicates(subset=['물품고유번호'], keep='first')
 
@@ -73,15 +78,24 @@ if not df_rt.empty:
 if not df_du.empty:
     df_du['불용일자'] = pd.to_datetime(df_du['불용일자'], errors='coerce')
     df_du['불용확정일자'] = pd.to_datetime(df_du['불용확정일자'], errors='coerce')
-    df_du = df_du.sort_values(by=['물품고유번호', '불용확정일자', '불용일자'], ascending=[True, False, False])
+    
+    df_du = df_du.sort_values(
+        by=['물품고유번호', '불용확정일자', '불용일자'], 
+        ascending=[True, False, False],
+        kind='mergesort'
+    )
     df_du = df_du.drop_duplicates(subset=['물품고유번호'], keep='first')
 
 # 3) 처분 이력 중복 제거
 if not df_dp.empty:
     df_dp['처분확정일자'] = pd.to_datetime(df_dp['처분확정일자'], errors='coerce')
-    df_dp = df_dp.sort_values(by=['물품고유번호', '처분확정일자'], ascending=[True, False])
+    
+    df_dp = df_dp.sort_values(
+        by=['물품고유번호', '처분확정일자'], 
+        ascending=[True, False],
+        kind='mergesort'
+    )
     df_dp = df_dp.drop_duplicates(subset=['물품고유번호'], keep='first')
-
 # ---------------------------------------------------------
 # 1. 데이터 병합 (Master Table 생성)
 # ---------------------------------------------------------
