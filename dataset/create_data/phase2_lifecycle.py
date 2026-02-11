@@ -13,7 +13,7 @@ Faker.seed(SEED_VAL)
 fake = Faker('ko_KR') 
 
 # [Professor Fix 1] 기준일자 고정
-FIXED_TODAY_STR = "2026-2-10"
+FIXED_TODAY_STR = "2026-02-10"
 TODAY = datetime.strptime(FIXED_TODAY_STR, "%Y-%m-%d")
 now = TODAY # 코드 내 now 변수 호환용
 

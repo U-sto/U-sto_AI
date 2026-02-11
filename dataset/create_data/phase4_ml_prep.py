@@ -7,7 +7,7 @@ from pandas.errors import EmptyDataError
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
 # [Professor Fix 1] 기준일 고정
-FIXED_TODAY_STR = "2026-2-10"
+FIXED_TODAY_STR = "2026-02-10"
 today = pd.to_datetime(FIXED_TODAY_STR).date()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -81,7 +81,7 @@ if not df_dp.empty:
     df_dp['처분확정일자'] = pd.to_datetime(df_dp['처분확정일자'], errors='coerce')
     df_dp = df_dp.sort_values(by=['물품고유번호', '처분확정일자'], ascending=[True, False])
     df_dp = df_dp.drop_duplicates(subset=['물품고유번호'], keep='first')
-    
+
 # ---------------------------------------------------------
 # 1. 데이터 병합 (Master Table 생성)
 # ---------------------------------------------------------
