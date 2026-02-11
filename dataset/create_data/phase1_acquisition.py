@@ -138,7 +138,7 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
     # ---------------------------------------------------------
     # 1) 금액 계산 (과거로 갈수록 저렴하게 역산)
     # 기준년도(2026 -> FIXED_TODAY 연도)와의 차이
-    current_std_year = 2026 # G2B 데이터 기준 연도
+    current_std_year = TODAY.year # G2B 데이터 기준 연도
     years_diff = current_std_year - date_obj.year
     
     # 3년에 1.5% 물가 상승 가정 -> 과거로 갈수록 할인 (Discount)

@@ -190,12 +190,19 @@ df_final['운용월수'] = (days_diff_clipped / 30.0).fillna(0).astype(int)
 # (2) 취득월 (계절성)
 df_final['취득월'] = df_final['취득일자'].dt.month
 
-# (3) 학습데이터여부
-# 기계적 수명이 다한 것만 학습('Y'). 단순 매각이나 현재 운용 중인 것은 예측 대상('N')
-# [Copilot Fix] 처분방식이 폐기/멸실이면서, 실제로 '확정'된 건만 학습 데이터로 사용
-is_mech_end = df_final['처분방식'].isin(['폐기', '멸실', '매각']) # 매각도 포함하여 학습 범위 확장 권장
-is_disposal_confirmed = (df_final['처분승인상태'] == '확정') | df_final['처분확정일자'].notna()
+# (3) 학습데이터여부 산정 [Review Fix]
+# 리뷰 반영: 매각을 포함하되, 수명 종료로 간주할 수 있는 명확한 조건 적용
+# - 확실한 수명 종료: 폐기, 멸실
+cond_disposal = df_final['처분방식'].isin(['폐기', '멸실'])
 
+# - 매각 중 수명 종료로 볼 사유 (Phase 2에서 생성된 물리적/노후화 사유들)
+#   제외 대상: '활용부서부재', '잉여물품' 등 (조기 매각 가능성 있음)
+eol_reasons = ['고장/파손', '노후화(성능저하)', '수리비용과다', '구형화', '내구연한 경과(노후화)']
+cond_sale_eol = (df_final['처분방식'] == '매각') & (df_final['불용사유'].isin(eol_reasons))
+
+# 학습 대상 정의: 처분이 확정되었고, 기계적 수명이 다한 것(폐기/멸실 OR 노후화 매각)
+is_disposal_confirmed = (df_final['처분승인상태'] == '확정') | df_final['처분확정일자'].notna()
+is_mech_end = cond_disposal | cond_sale_eol
 df_final['학습데이터여부'] = np.where(is_mech_end & is_disposal_confirmed, 'Y', 'N')
 
 # 학습여부 판단 후 임시 컬럼 제거 (선택 사항, 저장 시 제외해도 됨)
@@ -377,10 +384,14 @@ output_cols = [
     '운용연차', '운용월수', '잔여내용연수', '누적사용부하', '고장임박도'
 ]
 
-# 컬럼 존재 여부 체크 후 저장
-valid_output_cols = [c for c in output_cols if c in df_final.columns]
-df_export = df_final.reindex(columns=valid_output_cols)
-
+# 컬럼 스키마 고정: 누락 컬럼은 NaN으로 생성 후 저장
+missing_cols = [c for c in output_cols if c not in df_final.columns]
+if missing_cols:
+    print("[경고] 최종 출력 스키마에서 누락된 컬럼이 있어 NaN으로 채웁니다:")
+    print("   - " + ", ".join(missing_cols))
+    for c in missing_cols:
+        df_final[c] = np.nan
+df_export = df_final.reindex(columns=output_cols)
 save_path = os.path.join(SAVE_DIR, 'phase4_training_data.csv')
 df_export.to_csv(save_path, index=False, encoding='utf-8-sig')
 
