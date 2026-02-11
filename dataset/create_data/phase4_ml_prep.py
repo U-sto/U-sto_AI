@@ -52,6 +52,37 @@ df_dp = load_csv_safe('06_01_disposal_list.csv', expected_cols=COLS_DP)    # 처
 print(f"   - 원천 데이터 로드 완료: 운용 대장 {len(df_op)}건")
 
 # ---------------------------------------------------------
+# [Review Fix] 데이터 중복 제거 (Deduplication)
+# ---------------------------------------------------------
+# 재사용 루프로 인해 동일 ID에 대한 반납/불용 이력이 여러 건 존재할 수 있음.
+# 병합 시 Cartesian Product 방지를 위해, 각 자산별 '가장 최신' 이력 1건만 남김.
+
+print("   > 이력 데이터 중복 제거(최신 건 유지) 수행 중...")
+
+# 1) 반납 이력 중복 제거
+if not df_rt.empty:
+    # 날짜 형변환 (정렬을 위해)
+    df_rt['반납일자'] = pd.to_datetime(df_rt['반납일자'], errors='coerce')
+    df_rt['반납확정일자'] = pd.to_datetime(df_rt['반납확정일자'], errors='coerce')
+    # 확정일 우선, 없으면 신청일 기준 내림차순 정렬 (최신 날짜가 위로)
+    df_rt = df_rt.sort_values(by=['물품고유번호', '반납확정일자', '반납일자'], ascending=[True, False, False])
+    # ID별 첫 번째 행만 유지
+    df_rt = df_rt.drop_duplicates(subset=['물품고유번호'], keep='first')
+
+# 2) 불용 이력 중복 제거
+if not df_du.empty:
+    df_du['불용일자'] = pd.to_datetime(df_du['불용일자'], errors='coerce')
+    df_du['불용확정일자'] = pd.to_datetime(df_du['불용확정일자'], errors='coerce')
+    df_du = df_du.sort_values(by=['물품고유번호', '불용확정일자', '불용일자'], ascending=[True, False, False])
+    df_du = df_du.drop_duplicates(subset=['물품고유번호'], keep='first')
+
+# 3) 처분 이력 중복 제거
+if not df_dp.empty:
+    df_dp['처분확정일자'] = pd.to_datetime(df_dp['처분확정일자'], errors='coerce')
+    df_dp = df_dp.sort_values(by=['물품고유번호', '처분확정일자'], ascending=[True, False])
+    df_dp = df_dp.drop_duplicates(subset=['물품고유번호'], keep='first')
+    
+# ---------------------------------------------------------
 # 1. 데이터 병합 (Master Table 생성)
 # ---------------------------------------------------------
 print("   1. 생애주기 병합 (운용+반납+불용+처분)...")
