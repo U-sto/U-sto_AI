@@ -273,7 +273,8 @@ df_final.loc[mask_train, '실제수명'] = df_final.loc[mask_train, '운용연�
 
 # (12) 범주형 데이터 수치화 (Label Encoding)
 # 모델 학습을 위해 텍스트(String) 데이터를 숫자(Code)로 변환
-categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스', '처분방식', '상태변화']
+# ⚠️ 예측 시점에 관측 가능한 컬럼만 인코딩 대상에 포함 (데이터 누수 방지) -> 처분방식, 상태변화 제거
+categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스']
 
 
 for col in categorical_cols:

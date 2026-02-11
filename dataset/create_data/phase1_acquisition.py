@@ -55,7 +55,7 @@ REMARK_TEMPLATES_BY_CLASS = {
     
     # 교육 기자재
     "칠판보조장": ["강의실 기자재 보강", "노후 기자재 교체"],
-    "인터랙티브화이트보드및악세서리": ["스마트 강의실 구축", "디지털 강의 환경 개선"],
+    "인터랙티브화이트보드및액세서리": ["스마트 강의실 구축", "디지털 강의 환경 개선"],
     
     # 신규 품목
     "다기능복사기": ["보안 문서 파기용", "사무실 비치용"],
@@ -312,7 +312,7 @@ def generate_acquisition_data_lifecycle():
                 target_total_qty = int(random.randint(10, 20) * dept_scale)
 
             # --- E. 고가/특수 교육 기자재 ---
-            elif item_name in ["인터랙티브화이트보드및악세서리", "칠판보조장"]:
+            elif item_name in ["인터랙티브화이트보드및액세서리", "칠판보조장"]:
                 target_total_qty = int(random.randint(7, 10) * dept_scale)
             
             # --- F. 실험/연구 장비 (특수) [NEW] ---
