@@ -8,7 +8,7 @@ from pandas.errors import EmptyDataError
 # ---------------------------------------------------------
 # [Professor Fix 1] 기준일 고정
 FIXED_TODAY_STR = "2026-02-10"
-today = pd.to_datetime(FIXED_TODAY_STR).date()
+today = pd.to_datetime(FIXED_TODAY_STR).normalize()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOAD_DIR = os.path.join(BASE_DIR, "data_lifecycle")
