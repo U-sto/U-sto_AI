@@ -131,17 +131,22 @@ results = {
 def create_asset_ids(df: pd.DataFrame) -> pd.Series:
     """
     형식: M{연도(4)}{시퀀스(5)} -> 예: M202400001
-개선점: 입력 데이터 순서(row index)가 바뀌어도 ID가 변하지 않도록 
-            '불변 속성'들을 모두 타이브레이커로 사용하여 정렬
+    개선점: 모든 컬럼 정보(Tie-Breaker)를 포함한 안정 정렬을 사용하여
+            입력 순서가 바뀌어도 ID 부여 결과가 항상 동일하도록 보장
     """
-    # 원본 인덱스 보존 (나중에 순서대로 다시 끼워넣기 위함)
+    # 원본 인덱스 보존
     df_temp = df.copy()
     
     # 1. 연도 추출
     df_temp['temp_year'] = pd.to_datetime(df_temp['취득일자']).dt.year
     
-    # 2. [핵심] 완전 결정적 정렬 (Deterministic Sort)
-    sort_cols = ['temp_year', '운용부서코드', 'G2B_목록번호', '취득금액', '취득일자', '비고']
+    # 2. [Tie-Breaker] 동률 처리를 위한 '행 내용 기반' 정렬 키 생성
+    #    모든 컬럼 값을 문자열로 이어붙여서, 내용이 조금이라도 다르면 순서가 고정되게 함
+    df_temp['row_content_hash'] = df_temp.astype(str).sum(axis=1)
+    
+    # 3. [핵심] 완전 결정적 정렬 (Deterministic Sort)
+    # 정렬 키: 연도 -> 부서 -> 품목 -> 금액 -> 날짜 -> 비고 -> (Tie-Breaker)내용해시
+    sort_cols = ['temp_year', '운용부서코드', 'G2B_목록번호', '취득금액', '취득일자', '비고', 'row_content_hash']
     
     # 존재하는 컬럼만 필터링 (안전장치)
     valid_sort_cols = [col for col in sort_cols if col in df_temp.columns]
@@ -149,21 +154,20 @@ def create_asset_ids(df: pd.DataFrame) -> pd.Series:
     df_temp = df_temp.sort_values(
         by=valid_sort_cols,
         ascending=[True] * len(valid_sort_cols),
-        kind='mergesort' # [Review Fix] 안정 정렬(Stable Sort) 사용
+        kind='mergesort' # [Review Fix] Stable Sort 사용 (동률 시 순서 유지 보장)
     )
     
-    # 3. 연도별 그룹핑 후 시퀀스 생성 (1, 2, 3...)
-    # 정렬된 상태에서 번호를 따므로, 항상 같은 물품이 같은 번호를 받음
+    # 4. 연도별 그룹핑 후 시퀀스 생성 (1, 2, 3...)
     df_temp['temp_seq'] = df_temp.groupby('temp_year').cumcount() + 1
     
-    # 4. ID 조합 (M + 2024 + 00001)
+    # 5. ID 조합 (M + 2024 + 00001)
     df_temp['asset_id'] = (
         'M' + 
         df_temp['temp_year'].astype(str) + 
         df_temp['temp_seq'].astype(str).str.zfill(5)
     )
     
-    # 5. 원래 순서대로 정렬하여 ID 시리즈 반환
+    # 6. 원래 순서대로 정렬하여 ID 시리즈 반환
     return df_temp['asset_id'].sort_index()
 
 def add_history(asset_id, date_str, prev_stat, curr_stat, reason, user_tuple=STAFF_USER):
