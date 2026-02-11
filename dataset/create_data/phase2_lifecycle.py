@@ -804,4 +804,4 @@ if not df_history.empty:
         print(f"      └ {status}: {len(df_history[df_history['(변경)운용상태'] == status])}건")
 # [NEW] 물품별 수량 통계 출력 (Phase 2 결과 기준)
 print("   - 물품별 운용 수량 (상위 25개):")
-print(df_operation['G2B_목록명'].value_counts().head(25))
+print(df_operation['G2B_목록명'].value_counts().head(22))

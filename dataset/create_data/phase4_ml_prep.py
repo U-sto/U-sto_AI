@@ -222,10 +222,10 @@ def get_severity(dept_name):
     if pd.isna(dept_name): return 1.0
     dept_str = str(dept_name)
     # 고부하 부서
-    if any(k in dept_str for k in ['소프트웨어', '공학', '전산', 'AI', '정보', '컴퓨터']):
+    if any(k in dept_str for k in ['소프트웨어', '공학', '전산', 'AI', '정보','공과', '컴퓨터']):
         return 1.3
     # 중부하 부서
-    if '연구' in dept_str or '실험' in dept_str:
+    if any(k in dept_str for k in ['연구', '실험', '과학']):
         return 1.2
     return 1.0
 
@@ -274,7 +274,7 @@ df_final.loc[mask_train, '실제수명'] = df_final.loc[mask_train, '운용연�
 # (12) 범주형 데이터 수치화 (Label Encoding)
 # 모델 학습을 위해 텍스트(String) 데이터를 숫자(Code)로 변환
 # ⚠️ 예측 시점에 관측 가능한 컬럼만 인코딩 대상에 포함 (데이터 누수 방지) -> 처분방식, 상태변화 제거
-categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스']
+categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스',]
 
 
 for col in categorical_cols:
@@ -372,7 +372,8 @@ output_cols = [
     '가격민감도', '장비중요도', '리드타임등급', '운용월수', '취득월',
     
     # [NEW] 인코딩된 범주형 Feature (모델 입력용)
-    'G2B목록명_Code', '물품분류명_Code', '운용부서코드_Code', '캠퍼스_Code', '처분방식_Code', '상태변화_Code',
+    'G2B목록명_Code', '물품분류명_Code', '운용부서코드_Code', '캠퍼스_Code', 
+    # '처분방식_Code', '상태변화_Code' <-- [제외] Leakage 위험
     
     # Target (정답지) 및 구분
     '학습데이터여부', '데이터세트구분', '실제수명', 

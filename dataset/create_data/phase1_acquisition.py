@@ -63,7 +63,7 @@ REMARK_TEMPLATES_BY_CLASS = {
     "공기청정기": ["사무실 환경 개선", "강의실 미세먼지 관리"],
 }
 
-# 1-1. G2B 품목 마스터 (18개 품목)
+# 1-1. G2B 품목 마스터 (22개 품목)
 # 구조: [물품분류코드(8), 물품식별코드(8), 품목명, 분류명, 내용연수, 평균단가(원)]
 G2B_MASTER_DATA = [
     # =========================
@@ -304,7 +304,7 @@ def generate_acquisition_data_lifecycle():
                     target_total_qty = int(random.randint(0, 2))
 
             # --- D. 가구/강의실 비품 (대량) ---
-            elif item_name in ["책상", "작업용의자", "책걸상", "회의용탁자"]:
+            elif item_name in ["책상", "작업용의자", "책걸상", "회의용탁자", "책상용콤비의자"]:
                 # 인원수 + 강의실/회의실 수요 (30~60개)
                 target_total_qty = int(random.randint(30, 60) * dept_scale)
             # --- 소파 ---
@@ -436,4 +436,4 @@ df_item.to_csv(os.path.join(SAVE_DIR, '03_02_g2b_item_list.csv'), index=False, e
 print("✅ [Phase 1] 수명 주기 기반 데이터 생성 완료!")
 print(f"   - 총 {len(df_acquisition)}건 생성됨 (시뮬레이션 기반)")
 print(f"   - 데이터 기간: {df_acquisition['취득일자'].min()} ~ {df_acquisition['취득일자'].max()}")
-print(f"   - 상위 품목 분포:\n{df_acquisition['G2B_목록명'].value_counts().head(25)}")
+print(f"   - 상위 품목 분포:\n{df_acquisition['G2B_목록명'].value_counts().head(22)}")
