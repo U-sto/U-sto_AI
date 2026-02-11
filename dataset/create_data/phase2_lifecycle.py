@@ -5,7 +5,17 @@ import random
 from datetime import datetime, timedelta
 from faker import Faker
 
+# [Professor Fix 1] 시드 및 날짜 고정
+SEED_VAL = 42
+random.seed(SEED_VAL)
+np.random.seed(SEED_VAL)
+Faker.seed(SEED_VAL)
 fake = Faker('ko_KR') 
+
+# [Professor Fix 1] 기준일자 고정
+FIXED_TODAY_STR = "2026-02-10"
+TODAY = datetime.strptime(FIXED_TODAY_STR, "%Y-%m-%d")
+now = TODAY # 코드 내 now 변수 호환용
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data_lifecycle") # create_data/data_lifecycle
@@ -105,10 +115,6 @@ MAX_REUSE_CYCLES = 3     # 최대 재사용 횟수 제한
 
 PROB_SURPLUS_REUSE = 0.1  # 잉여물품, 사업종료 재사용 확률 (신품인 경우)
 
-# 기준일자 (오늘)
-now = datetime.now()
-TODAY = datetime(now.year, now.month, now.day)
-
 # ---------------------------------------------------------
 # 1. 헬퍼 함수 & 데이터 구조 초기화
 # ---------------------------------------------------------
@@ -120,17 +126,49 @@ results = {
     'disposal': [], # 처분
     'history': []   # 이력
 }
-
+# [Professor Fix 3 + User Requirement] 자산 ID 생성 방식 개선 (하이브리드)
+# 기존 포맷(M+연도+시퀀스)을 유지하되, 정렬 기준을 고정하여 재현성 확보
 def create_asset_ids(df: pd.DataFrame) -> pd.Series:
-    """자산 고유번호 생성 로직 (M + 연도 + 시퀀스)"""
-    acq_dates = pd.to_datetime(df['취득일자'])
-    year_strs = acq_dates.dt.strftime('%Y')
-    seq_strs = (
-        pd.Series(np.arange(len(df)) + 1, index=df.index)
-        .astype(str)
-        .str.zfill(5)
+    """
+    형식: M{연도(4)}{시퀀스(5)} -> 예: M202400001
+    개선점: 모든 컬럼 정보(Tie-Breaker)를 포함한 안정 정렬을 사용하여
+            입력 순서가 바뀌어도 ID 부여 결과가 항상 동일하도록 보장
+    """
+    # 원본 인덱스 보존
+    df_temp = df.copy()
+    
+    # 1. 연도 추출
+    df_temp['temp_year'] = pd.to_datetime(df_temp['취득일자']).dt.year
+    
+    # 2. [Tie-Breaker] 동률 처리를 위한 '행 내용 기반' 정렬 키 생성
+    #    모든 컬럼 값을 문자열로 이어붙여서, 내용이 조금이라도 다르면 순서가 고정되게 함
+    df_temp['row_content_hash'] = df_temp.astype(str).sum(axis=1)
+    
+    # 3. [핵심] 완전 결정적 정렬 (Deterministic Sort)
+    # 정렬 키: 연도 -> 부서 -> 품목 -> 금액 -> 날짜 -> 비고 -> (Tie-Breaker)내용해시
+    sort_cols = ['temp_year', '운용부서코드', 'G2B_목록번호', '취득금액', '취득일자', '비고', 'row_content_hash']
+    
+    # 존재하는 컬럼만 필터링 (안전장치)
+    valid_sort_cols = [col for col in sort_cols if col in df_temp.columns]
+    
+    df_temp = df_temp.sort_values(
+        by=valid_sort_cols,
+        ascending=[True] * len(valid_sort_cols),
+        kind='mergesort' # [Review Fix] Stable Sort 사용 (동률 시 순서 유지 보장)
     )
-    return "M" + year_strs + seq_strs
+    
+    # 4. 연도별 그룹핑 후 시퀀스 생성 (1, 2, 3...)
+    df_temp['temp_seq'] = df_temp.groupby('temp_year').cumcount() + 1
+    
+    # 5. ID 조합 (M + 2024 + 00001)
+    df_temp['asset_id'] = (
+        'M' + 
+        df_temp['temp_year'].astype(str) + 
+        df_temp['temp_seq'].astype(str).str.zfill(5)
+    )
+    
+    # 6. 원래 순서대로 정렬하여 ID 시리즈 반환
+    return df_temp['asset_id'].sort_index()
 
 def add_history(asset_id, date_str, prev_stat, curr_stat, reason, user_tuple=STAFF_USER):
     """이력 추가 헬퍼 함수"""
@@ -768,3 +806,6 @@ print(f"   - 상태 이력: {len(df_history)}건")
 if not df_history.empty:
     for status in ['취득', '운용', '반납', '불용', '처분']:
         print(f"      └ {status}: {len(df_history[df_history['(변경)운용상태'] == status])}건")
+# [NEW] 물품별 수량 통계 출력 (Phase 2 결과 기준)
+print("   - 물품별 운용 수량 (상위 22개):")
+print(df_operation['G2B_목록명'].value_counts().head(22))
