@@ -105,17 +105,11 @@ _disp_conf = df_merged['처분확정일자'] if '처분확정일자' in df_merge
 # 우선순위: 처분확정 > 불용확정 > 반납확정 (가장 늦은 단계의 확정일이 실제 종료 시점)
 confirmed_end_date = _disp_conf.combine_first(_disuse_conf).combine_first(_ret_conf)
 
-# -------------------------------------------------------------------------
-# [Review Fix] 차선책: 신청일자 (반납일자 > 불용일자)
-# * 수정 내용: 단순히 날짜가 있다고 쓰는 게 아니라, 승인상태가 '확정'인 경우만 유효한 종료일로 인정
-#              (대기/반려 상태인 경우 운용 중인 것으로 간주하기 위함)
-# -------------------------------------------------------------------------
-# 반납일자 유효성 체크: 반납승인상태가 '확정'인 경우에만 날짜 채택
+# 4. 차선책: 신청일자 (승인상태 '확정'인 경우만)
+# 반납일자 유효성 체크
 valid_ret_date = df_merged['반납일자'].where(df_merged['반납승인상태'] == '확정')
-
-# 불용일자 유효성 체크: 불용승인상태가 '확정'인 경우에만 날짜 채택
+# 불용일자 유효성 체크
 valid_disuse_date = df_merged['불용일자'].where(df_merged['불용승인상태'] == '확정')
-
 # Fallback 구성: 확정된 반납일자 우선, 없으면 확정된 불용일자
 fallback_end_date = valid_ret_date.combine_first(valid_disuse_date)
 
@@ -151,8 +145,6 @@ df_final['캠퍼스'] = df_merged['캠퍼스']
 df_final['기준일'] = df_merged['기준일'] # 계산용 임시 컬럼
 
 # --- B. 결측치 처리 (Imputation) ---
-# [Copilot Fix] Feature Engineering 전에 결측치를 먼저 채움 + 안전장치 추가
-
 # 1) 취득금액 결측/0원: 중앙값(Median) 대체
 # 안전장치: 데이터가 아예 없거나 양수 금액이 없는 경우 대비
 valid_prices = df_final[df_final['취득금액'] > 0]['취득금액']
@@ -201,7 +193,7 @@ df_final['취득월'] = df_final['취득일자'].dt.month
 # (3) 학습데이터여부
 # 기계적 수명이 다한 것만 학습('Y'). 단순 매각이나 현재 운용 중인 것은 예측 대상('N')
 # [Copilot Fix] 처분방식이 폐기/멸실이면서, 실제로 '확정'된 건만 학습 데이터로 사용
-is_mech_end = df_final['처분방식'].isin(['폐기', '멸실'])
+is_mech_end = df_final['처분방식'].isin(['폐기', '멸실', '매각']) # 매각도 포함하여 학습 범위 확장 권장
 is_disposal_confirmed = (df_final['처분승인상태'] == '확정') | df_final['처분확정일자'].notna()
 
 df_final['학습데이터여부'] = np.where(is_mech_end & is_disposal_confirmed, 'Y', 'N')
@@ -214,7 +206,7 @@ df_final.drop(columns=['처분승인상태', '처분확정일자'], inplace=True
 # 내용연수가 법적 기준일 경우 모델이 실제 고장 패턴이 아니라 법적 기준만 학습할 위험이 있음.
 # 따라서 '잔여내용연수'는 시각화용으로만 남기고, 학습 데이터(output_cols)에서는 제외하는 것을 권장.
 
-# (4) 잔여내용연수 (보정된 내용연수 사용)
+# (4) 잔여내용연수 (학습 Feature에서는 제외할 것이지만 분석용으로 남겨둠)
 df_final['잔여내용연수'] = (df_final['내용연수'] - df_final['운용연차']).round(2)
 
 # (5) 부서가혹도 (Department Severity)
@@ -231,11 +223,10 @@ def get_severity(dept_name):
 
 df_final['부서가혹도'] = df_final['운용부서명'].apply(get_severity)
 
-# (6) 누적사용부하
+# (6) 누적사용부하 (운용연차가 포함되므로 학습 Feature 제외 후보)
 df_final['누적사용부하'] = (df_final['운용연차'] * df_final['부서가혹도']).round(2)
 
-# (7) 고장임박도 (Failure Imminence) - [보정된 내용연수 사용]
-# 일단 생성은 하되, Feature Importance 분석 후 제거 고려
+# (7) 고장임박도 (학습 Feature 제외 후보)
 ratio = df_final['운용연차'] / df_final['내용연수']
 df_final['고장임박도'] = (ratio ** 2).clip(0, 1).round(2)
 
@@ -254,7 +245,6 @@ df_final['리드타임등급'] = df_final['취득금액'].apply(get_lead_time_gr
 
 # (10) 장비중요도 - [계산된 민감도, 리드타임등급 사용]
 df_final['장비중요도'] = ((df_final['가격민감도'] * 0.7) + ((df_final['리드타임등급'] * 0.5) * 0.3)).round(2)
-# ... (기존 장비중요도 계산 코드 아래에 이어짐) ...
 
 # ---------------------------------------------------------
 # [Phase 4-1] 추가 피처 엔지니어링 및 인코딩
@@ -267,15 +257,18 @@ print("   > [4-1] 타겟 레이블링 및 범주형 데이터 수치화 수행..
 # [Target Definition]
 # Regression Target: '실제수명' (Total Lifespan)
 # 예측 시: 모델이 예측한 '예측_실제수명' - '현재_운용연차' = '예측_잔여수명(RUL)'
+
+# (11) 타겟 데이터(Y) 생성
+# 학습용 데이터(Y): 운용연차 = 실제수명
+# 예측용 데이터(N): 알 수 없음(NaN)
 df_final['실제수명'] = np.nan
 mask_train = df_final['학습데이터여부'] == 'Y'
 df_final.loc[mask_train, '실제수명'] = df_final.loc[mask_train, '운용연차']
 
 # (12) 범주형 데이터 수치화 (Label Encoding)
 # 모델 학습을 위해 텍스트(String) 데이터를 숫자(Code)로 변환
-# ⚠️ 예측 시점에 관측 가능한 컬럼만 인코딩 대상에 포함 (데이터 누수 방지) -> 처분방식, 상태변화 제거
+# ⚠️ Data Leakage 방지를 위해 '처분방식', '상태변화'는 인코딩 대상 및 학습 Feature에서 제외
 categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스',]
-
 
 for col in categorical_cols:
     # 결측치는 'Unknown'으로 채운 후 인코딩 (안전장치)
@@ -303,7 +296,6 @@ df_final['권장발주일'] = pd.NaT
 df_final['예측실행일자'] = today.strftime('%Y-%m-%d')
 # 실제잔여수명: 학습 데이터는 0(이미 종료됨), 예측 데이터는 미지수
 df_final.loc[df_final['학습데이터여부'] == 'Y', '실제잔여수명'] = 0.0
-# '예측잔여수명'은 위에서 NaN으로 초기화했으므로 여기서는 별도 설정을 하지 않습니다
 
 # ---------------------------------------------------------
 # 4. 이상치 제거 (Outlier Removal)
@@ -359,31 +351,36 @@ print(f"   - Pred  (운용) : {len(df_pred_source)}건")
 # 최종 저장
 # [Professor Fix 2] 최종 저장 컬럼 리스트 업데이트 (Leakage 변수 제외)
 output_cols = [
-    # 식별 및 원본 정보
-    '물품고유번호', 'G2B목록명', '물품분류명', '내용연수', '취득금액', '운용부서코드', 
-    '취득일자', '반납일자', '불용일자', '상태변화', '불용사유', '물품상태', 
-    '처분방식', '운용부서명', '캠퍼스',
+    # 식별 정보
+    '물품고유번호', 'G2B목록명', '물품분류명', '운용부서명', '캠퍼스',
     
-    # 핵심 Feature (학습 Feature)
-    '운용연차', 
-    # '잔여내용연수',  <-- [제외] Leakage 위험
-    '부서가혹도', '누적사용부하', 
-    '고장임박도', # <-- (선택적 포함, 과적합 시 제외 고려)
-    '가격민감도', '장비중요도', '리드타임등급', '운용월수', '취득월',
+    # 원본 메타데이터 (참고용)
+    '취득일자', '반납일자', '불용일자', '처분방식', '물품상태', '불용사유',
+    '상태변화', # <-- 참고용으로는 남기되 모델 입력(Code)에서는 제외
     
-    # [NEW] 인코딩된 범주형 Feature (모델 입력용)
-    'G2B목록명_Code', '물품분류명_Code', '운용부서코드_Code', '캠퍼스_Code', 
-    # '처분방식_Code', '상태변화_Code' <-- [제외] Leakage 위험
+    # [입력 Feature] - 시점/상태 독립적 속성
+    '내용연수', '취득금액', '부서가혹도', 
+    '가격민감도', '장비중요도', '리드타임등급', '취득월',
+    'G2B목록명_Code', '물품분류명_Code', '운용부서코드_Code', '캠퍼스_Code',
     
-    # Target (정답지) 및 구분
-    '학습데이터여부', '데이터세트구분', '실제수명', 
+    # [Target]
+    '실제수명',
     
-    # 예측 결과 Placeholder
+    # 데이터 구분
+    '학습데이터여부', '데이터세트구분',
+    
+    # 결과 Placeholder
     '실제잔여수명', '예측잔여수명', '(월별)고장예상수량', '안전재고', '필요수량', 
-    'AI예측고장일', '안전버퍼', '권장발주일', '예측실행일자'
+    'AI예측고장일', '안전버퍼', '권장발주일', '예측실행일자',
+    
+    # 참고용 파생변수 (학습엔 안쓰지만 분석엔 필요)
+    '운용연차', '운용월수', '잔여내용연수', '누적사용부하', '고장임박도'
 ]
 
-df_export = df_final.reindex(columns=output_cols)
+# 컬럼 존재 여부 체크 후 저장
+valid_output_cols = [c for c in output_cols if c in df_final.columns]
+df_export = df_final.reindex(columns=valid_output_cols)
+
 save_path = os.path.join(SAVE_DIR, 'phase4_training_data.csv')
 df_export.to_csv(save_path, index=False, encoding='utf-8-sig')
 
