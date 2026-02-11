@@ -52,11 +52,10 @@ REMARK_TEMPLATES_BY_CLASS = {
     "책상": ["강의실 환경 개선", "연구실 집기 교체", "신규 연구실 구축"],
     "작업용의자": ["사무환경 개선", "노후 집기 교체"],
     "책걸상": ["강의실 집기 교체", "노후 책걸상 교체"],
-    "서랍형수납장": ["연구실 문서 보관용", "행정 자료 수납용"],
     
     # 교육 기자재
     "칠판보조장": ["강의실 기자재 보강", "노후 기자재 교체"],
-    "인터랙티브화이트보드": ["스마트 강의실 구축", "디지털 강의 환경 개선"],
+    "인터랙티브화이트보드및악세서리": ["스마트 강의실 구축", "디지털 강의 환경 개선"],
     
     # 신규 품목
     "다기능복사기": ["보안 문서 파기용", "사무실 비치용"],
@@ -292,7 +291,7 @@ def generate_acquisition_data_lifecycle():
                 target_total_qty = int(random.randint(15,35) * dept_scale)
 
             # --- B. 사무 주변기기 (프린터, 스캐너, 공기청정기 등) ---
-            elif item_name in ["레이저프린터", "스캐너", "다기능복사기", "공기청정기", "세단기", "텔레비전"]:
+            elif item_name in ["레이저프린터", "스캐너", "다기능복사기", "공기청정기", "텔레비전"]:
                 # 부서 규모에 따라 2~5대 수준 보유
                 target_total_qty = int(random.randint(2, 5) * dept_scale)
                 
@@ -305,7 +304,7 @@ def generate_acquisition_data_lifecycle():
                     target_total_qty = int(random.randint(0, 2))
 
             # --- D. 가구/강의실 비품 (대량) ---
-            elif item_name in ["책상", "작업용의자", "책걸상", "회의용탁자", "서랍형수납장"]:
+            elif item_name in ["책상", "작업용의자", "책걸상", "회의용탁자"]:
                 # 인원수 + 강의실/회의실 수요 (30~60개)
                 target_total_qty = int(random.randint(30, 60) * dept_scale)
             # --- 소파 ---
@@ -313,7 +312,7 @@ def generate_acquisition_data_lifecycle():
                 target_total_qty = int(random.randint(10, 20) * dept_scale)
 
             # --- E. 고가/특수 교육 기자재 ---
-            elif item_name in ["인터랙티브화이트보드", "칠판보조장"]:
+            elif item_name in ["인터랙티브화이트보드및악세서리", "칠판보조장"]:
                 target_total_qty = int(random.randint(7, 10) * dept_scale)
             
             # --- F. 실험/연구 장비 (특수) [NEW] ---
@@ -336,7 +335,7 @@ def generate_acquisition_data_lifecycle():
                 is_bulk_purchase = False 
                 
                 # 1) 대량 구매 가능 품목 (PC, 가구)
-                if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "책상", "책상용콤비의자","작업용의자", "책걸상","액정모니터", "회의용탁자", "서랍형수납장"]:
+                if item_name in ["노트북컴퓨터", "데스크톱컴퓨터", "책상", "책상용콤비의자","작업용의자", "책걸상","액정모니터", "회의용탁자"]:
                     # 30% 확률로 강의실/실습실 구축용 대량 구매 (10~20개)
                     if remaining_qty >= 10 and random.random() < 0.3:
                         batch_size = random.randint(10, 20)
@@ -346,7 +345,7 @@ def generate_acquisition_data_lifecycle():
                         batch_size = random.randint(1, 3)
                         
                 # 2) 네트워크/주변기기 (소량 묶음)
-                elif item_name in ["네트워크라우터", "네트워크시스템장비용랙", "하드디스크드라이브", "네트워크라우터", "텔레비전"]:
+                elif item_name in ["네트워크시스템장비용랙", "하드디스크드라이브", "네트워크라우터", "텔레비전"]:
                      # 인프라 구축 시 2~4개씩 살 수 있음
                      batch_size = random.randint(2, 4)
                 

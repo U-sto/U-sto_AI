@@ -1,9 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime
 from pandas.errors import EmptyDataError
-from sklearn.preprocessing import LabelEncoder # [추가] 인코딩용 라이브러리
 
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
@@ -277,18 +275,20 @@ df_final.loc[mask_train, '실제수명'] = df_final.loc[mask_train, '운용연�
 # 모델 학습을 위해 텍스트(String) 데이터를 숫자(Code)로 변환
 categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스', '처분방식', '상태변화']
 
-le = LabelEncoder()
+
 for col in categorical_cols:
     # 결측치는 'Unknown'으로 채운 후 인코딩 (안전장치)
     df_final[col] = df_final[col].fillna('Unknown').astype(str)
     
+    # pd.factorize 사용 (sort=True를 해야 알파벳 순으로 번호가 매겨져 재현성 유지됨)
+    # codes: 숫자로 변환된 배열, uniques: 고유값 리스트
+    codes, uniques = pd.factorize(df_final[col], sort=True)
+    
     # 원본 컬럼은 유지하고, '_Code' 붙은 수치화 컬럼 생성
-    # 예: G2B목록명(노트북) -> G2B목록명_Code(0), 데스크톱(1)...
-    df_final[f'{col}_Code'] = le.fit_transform(df_final[col])
+    df_final[f'{col}_Code'] = codes
 
     # (옵션) 인코딩 매핑 정보 출력 (확인용)
-    # mapping = dict(zip(le.classes_, le.transform(le.classes_)))
-    # print(f"     - {col} 매핑 완료 ({len(mapping)}개)")
+    print(f"     - {col} 매핑 완료: {len(uniques)}개 항목")
 
 # --- C. 예측값/결과값 (Placeholder) ---
 df_final['실제잔여수명'] = np.nan 

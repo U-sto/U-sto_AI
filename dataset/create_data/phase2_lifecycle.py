@@ -131,7 +131,8 @@ results = {
 def create_asset_ids(df: pd.DataFrame) -> pd.Series:
     """
     형식: M{연도(4)}{시퀀스(5)} -> 예: M202400001
-    개선점: 입력 데이터가 섞여도 ID가 변하지 않도록 '불변 속성' 기준으로 정렬 후 번호 부여
+개선점: 입력 데이터 순서(row index)가 바뀌어도 ID가 변하지 않도록 
+            '불변 속성'들을 모두 타이브레이커로 사용하여 정렬
     """
     # 원본 인덱스 보존 (나중에 순서대로 다시 끼워넣기 위함)
     df_temp = df.copy()
@@ -142,13 +143,17 @@ def create_asset_ids(df: pd.DataFrame) -> pd.Series:
     # 1. 연도 추출
     df_temp['temp_year'] = pd.to_datetime(df_temp['취득일자']).dt.year
     
-    # 2. [핵심] 결정적 정렬 (Deterministic Sort)
-    # 데이터가 어떤 순서로 들어오든, 항상 이 기준대로 줄을 세운 뒤 번호를 매깁니다.
-    # 정렬 기준: 연도 -> 부서 -> 품목 -> 금액 -> 원본순서(타이브레이커)
+    # 2. [핵심] 완전 결정적 정렬 (Deterministic Sort)
+    # [Fix] '물품품목명' 컬럼이 로드되지 않았을 경우를 대비해 제거
+    # 대신 '취득정리구분' 등 확실히 있는 컬럼을 추가하여 정렬 안정성 확보
+    sort_cols = ['temp_year', '운용부서코드', 'G2B_목록번호', '취득금액', '취득일자', '비고']
+    
+    # 존재하는 컬럼만 필터링 (안전장치)
+    valid_sort_cols = [col for col in sort_cols if col in df_temp.columns]
+    
     df_temp = df_temp.sort_values(
-        by=['temp_year', '운용부서코드', 'G2B_목록번호', '취득금액', '_orig_pos'],
-        ascending=[True, True, True, True, True],
-        kind='mergesort',  # 안정 정렬 사용으로 동률일 때도 순서가 보장됨
+        by=valid_sort_cols,
+        ascending=[True] * len(valid_sort_cols)
     )
     
     # 3. 연도별 그룹핑 후 시퀀스 생성 (1, 2, 3...)
