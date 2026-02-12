@@ -15,5 +15,3 @@ ChromaDB의 HNSW 기반 벡터 인덱스를 통해
 
 검색은 similarity_search_with_score를 통해 수행되며,
 거리 기반 벡터 유사도 계산 결과를 반환한다.
-# test edit from colab
-HELLO
