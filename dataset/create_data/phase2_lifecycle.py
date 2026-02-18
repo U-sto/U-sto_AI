@@ -273,12 +273,12 @@ def step_operation_transfer(ctx, is_direct=False):
     new_dept = ctx['curr_dept_name']
     if is_direct:
         req_type = '운용전환(직접)'
-        transfer_remark = f"{new_dept}로 관리전환(직접인계) 신청"
+        transfer_remark = f"{new_dept}로 운용전환(직접인계) 신청"
         prev_stat_log = '운용'
         fail_fallback_status = '운용' # 반려되면 그냥 운용 상태 유지
     else:
         req_type = '운용전환(재사용)'
-        transfer_remark = f"{new_dept}에서 사용 신청(재사용 {reuse_cnt}회차)"
+        transfer_remark = f"{new_dept}에서 운용전환(재사용) 신청(재사용 {reuse_cnt}회차)"
         prev_stat_log = '반납'
         fail_fallback_status = '반납' # 반려되면 반납 상태 유지
 
@@ -661,6 +661,9 @@ for row in df_operation.itertuples():
         # 1) 날짜 및 기본 정보 세팅
         acq_dt = pd.to_datetime(row.취득일자)
 
+        # [Fix] 서버는 관리태그 부착 필수 (초기 랜덤값 무시하고 강제 설정)
+        df_operation.at[ctx['idx'], '출력상태'] = '출력'
+        
         # 2) 구형 서버 (2020년 이전) -> 운용하다가 불용/처분됨
         if acq_dt.year < 2020:
             # 내용연수 6년 + 알파 시점에 불용
