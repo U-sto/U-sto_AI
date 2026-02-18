@@ -246,8 +246,8 @@ def step_operation_transfer(ctx, is_direct=False):
     - 반납된 물품을 다른 부서가 사용하겠다고 신청하는 과정
     param is_direct: True면 운용 중 직접 전환, False면 반납 후 재사용
     """
-    # 컨텍스트에서 필요한 변수 추출
-    # sim_cursor_date는 '반납확정일자' 시점임
+    # sim_cursor_date는 기본적으로 '반납확정일자' 시점이나,
+    # is_direct=True 인 경우에는 직접전환 이벤트 발생일(운용 중 전환일)을 의미함
     sim_date = ctx['sim_cursor_date']
     asset_id = ctx['asset_id']
     row = ctx['row']
@@ -446,8 +446,8 @@ def step_process_return(ctx, event_date):
         
         # 반납 후 처리 경로
         # 1. 재사용 (부서 재배정)
-            # A. 신품이거나
-            # B. 중고품인데 사용한지 얼마 안 된 것 (RECENT_USE_LIMIT_DAYS 이내)
+        # A. 신품이거나
+        # B. 중고품인데 사용한지 얼마 안 된 것 (RECENT_USE_LIMIT_DAYS 이내)
         # 2. 불용 진행 (재활용 불가 판단 등)
         acq_dt = pd.to_datetime(ctx['row'].취득일자)
         days_used = (confirm_date - acq_dt).days
@@ -589,7 +589,7 @@ df_operation['물품고유번호'] = create_asset_ids(df_operation)
 df_operation['운용상태'] = '운용' 
 # [수정] 최초 운용 등재 시 PROBS_PRINT_STATUS 확률로 출력상태 설정
 df_operation['출력상태'] = np.random.choice(
-    ['미출력', '출력'],
+    ['출력', '미출력'],
     size=len(df_operation),
     p=PROBS_PRINT_STATUS
 )
