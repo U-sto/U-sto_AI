@@ -312,7 +312,7 @@ def step_operation_transfer(ctx, is_direct=False):
     ctx['curr_status'] = '운용'
     
     # [Fix] 코드 리뷰 반영: 새로운 운용 시작일을 컨텍스트에 기록 (반납 시 사용 기간 계산용)
-    ctx['last_operation_start_date'] = confirm_date
+    ctx['last_operation_start_date'] = clear_date
 
     # 운용대장 업데이트 (메모리 상)
     ctx['df_operation'].at[ctx['idx'], '운용상태'] = '운용'
@@ -330,10 +330,14 @@ def step_determine_event(ctx):
     sim_date = ctx['sim_cursor_date']
     df_operation = ctx['df_operation']
     acq_date = pd.to_datetime(ctx['row'].취득일자)
-    use_start_date = pd.to_datetime(df_operation.at[ctx['idx'], '운용확정일자']) if '운용확정일자' in df_operation.columns and pd.notna(df_operation.at[ctx['idx'], '운용확정일자']) else sim_date
+
+    # 운용확정일자 가져오기
+    use_start_date = pd.to_datetime(df_operation.at[ctx['idx'], '운용확정일자']) \
+        if '운용확정일자' in df_operation.columns and pd.notna(df_operation.at[ctx['idx'], '운용확정일자']) \
+        else sim_date
     
-    age_days = (TODAY - acq_date).days
-    days_since_use = (TODAY - use_start_date).days
+    age_days = (sim_date - acq_date).days
+    days_since_use = (sim_date - use_start_date).days
 
     event_date = TODAY + timedelta(days=1)
 
@@ -701,7 +705,7 @@ for row in df_operation.itertuples():
                 '물품고유번호': ctx['asset_id'], 
                 '취득일자': row.취득일자, '취득금액': row.취득금액,
                 '정리일자': row.정리일자, '운용부서': row.운용부서, 
-                '운용상태' : '운용', '내용연수': row.내용연수,
+                '운용상태' : '불용', '내용연수': row.내용연수,
                 '물품상태': '폐품', '사유': disuse_reason
             })
             
