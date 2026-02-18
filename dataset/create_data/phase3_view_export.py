@@ -205,7 +205,7 @@ else:
     # 1. 이력 데이터 정렬
     # '변경일자' 컬럼이 있는지 확인 후 변환
     if '변경일자' in df_hist.columns:
-        df_hist['변경일자'] = pd.to_datetime(df_hist['변경일자'])
+        df_hist['변경일자'] = pd.to_datetime(df_hist['변경일자'], format='mixed')
         df_hist = df_hist.sort_values(by=['물품고유번호', '변경일자'])
         
         scd_list = []

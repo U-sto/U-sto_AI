@@ -298,7 +298,7 @@ def step_operation_transfer(ctx, is_direct=False):
         '물품고유번호': asset_id, 
         '취득일자': row.취득일자, '취득금액': row.취득금액,
         '운용부서': ctx['curr_dept_name'], 
-        '사용자': transfer_remark, # 비고란에 전환 신청 내용 기입
+        '사용자': transfer_remark, # 전환 신청 내용을 '사용자' 필드에 기입
         '신청구분': req_type,
         '운용상태': display_status
     })
@@ -450,7 +450,12 @@ def step_process_return(ctx, event_date):
         # B. 중고품인데 사용한지 얼마 안 된 것 (RECENT_USE_LIMIT_DAYS 이내)
         # 2. 불용 진행 (재활용 불가 판단 등)
         acq_dt = pd.to_datetime(ctx['row'].취득일자)
-        days_used = (confirm_date - acq_dt).days
+        # 최근 운용 시작일을 기준으로 사용 기간 계산 (없으면 취득일자 기준)
+        operation_start_dt = ctx.get('last_operation_start_date')
+        if isinstance(operation_start_dt, str):
+            operation_start_dt = pd.to_datetime(operation_start_dt)
+        base_dt = operation_start_dt if operation_start_dt is not None and not pd.isna(operation_start_dt) else acq_dt
+        days_used = (confirm_date - base_dt).days
         is_recent_used = (condition == '중고품' and days_used <= RECENT_USE_LIMIT_DAYS)
         
         can_reuse = (condition == '신품') or is_recent_used
@@ -583,6 +588,8 @@ def step_process_disposal(ctx, condition, disuse_reason):
 print("⚙️ [Phase 2] 개별 자산 분화 및 고유번호 생성 중...")
 df_confirmed = df_acq[df_acq['승인상태'] == '확정'].copy()
 df_operation = df_confirmed.loc[df_confirmed.index.repeat(df_confirmed['수량'])].reset_index(drop=True)
+
+df_operation['취득금액'] = (df_operation['취득금액'] / df_operation['수량']).fillna(0).astype('int64')
 df_operation['수량'] = 1
 df_operation['물품고유번호'] = create_asset_ids(df_operation)
 # [수정] 초기 상태를 '운용'으로 설정 (취득 즉시 운용대장 등재)
@@ -650,10 +657,15 @@ for row in df_operation.itertuples():
         'df_operation': df_operation,
         'assigned_limit_days': assigned_limit_days,  # <--- 현실 수명 할당
     }
-    # 1. 취득 이력 생성
-    add_history(ctx['asset_id'], ctx['clear_date_str'], '-', '취득', '신규 취득')
+    # 1. 취득 이력 생성 (동일 일자 내에서 운용 이력보다 먼저 발생하도록 미세 시간차 부여)
+    acq_dt = datetime.combine(clear_date.date(), datetime.min.time())
+    op_dt = acq_dt + timedelta(seconds=1)
+    acq_dt_str = acq_dt.strftime('%Y-%m-%d %H:%M:%S')
+    op_dt_str = op_dt.strftime('%Y-%m-%d %H:%M:%S')
+    add_history(ctx['asset_id'], acq_dt_str, '-', '취득', '신규 취득')
+
     # 2. 곧바로 운용 등재 (전산상 자동 전환)
-    add_history(ctx['asset_id'], ctx['clear_date_str'], '취득', '운용', '신규 운용 등재')
+    add_history(ctx['asset_id'], op_dt_str, '취득', '운용', '신규 운용 등재')
     # ==========================================================================
     # [NEW] 특수 물품(서버) 전용 로직 (시뮬레이션 루프 패스)
     # ==========================================================================
@@ -663,7 +675,7 @@ for row in df_operation.itertuples():
 
         # [Fix] 서버는 관리태그 부착 필수 (초기 랜덤값 무시하고 강제 설정)
         df_operation.at[ctx['idx'], '출력상태'] = '출력'
-        
+
         # 2) 구형 서버 (2020년 이전) -> 운용하다가 불용/처분됨
         if acq_dt.year < 2020:
             # 내용연수 6년 + 알파 시점에 불용
