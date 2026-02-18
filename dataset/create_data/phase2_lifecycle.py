@@ -312,7 +312,7 @@ def step_operation_transfer(ctx, is_direct=False):
     ctx['curr_status'] = '운용'
     
     # [Fix] 코드 리뷰 반영: 새로운 운용 시작일을 컨텍스트에 기록 (반납 시 사용 기간 계산용)
-    ctx['last_operation_start_date'] = clear_date
+    ctx['last_operation_start_date'] = confirm_date
 
     # 운용대장 업데이트 (메모리 상)
     ctx['df_operation'].at[ctx['idx'], '운용상태'] = '운용'
@@ -663,6 +663,7 @@ for row in df_operation.itertuples():
         'reuse_count': 0,
         'df_operation': df_operation,
         'assigned_limit_days': assigned_limit_days,  # <--- 현실 수명 할당
+        'last_operation_start_date': clear_date,
     }
     # 1. 취득 이력 생성 (동일 일자 내에서 운용 이력보다 먼저 발생하도록 미세 시간차 부여)
     acq_dt = datetime.combine(clear_date.date(), datetime.min.time())
