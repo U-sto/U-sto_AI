@@ -118,8 +118,6 @@ PROBS_DISPOSAL_BAD = [0.03, 0.95, 0.01, 0.01]  # 상태 나쁨
 
 MAX_REUSE_CYCLES = 3     # 최대 재사용 횟수 제한
 
-PROB_SURPLUS_REUSE = 0.1  # 잉여물품, 사업종료 재사용 확률 (신품인 경우)
-
 # ---------------------------------------------------------
 # 1. 헬퍼 함수 & 데이터 구조 초기화
 # ---------------------------------------------------------
@@ -267,28 +265,28 @@ def step_operation_transfer(ctx, is_direct=False):
     # 승인 상태 및 날짜 계산 (운용전환은 대부분 확정됨)
     status, confirm_date, req_date_fixed = get_approval_status_and_date(op_req_date, event_type='op_req', is_op_req=True)
     
-    # 재사용 차수
+    # 재사용 차수 증가 (직접전환이든 재사용이든 횟수 차감하여 제한)
     reuse_cnt = ctx.get('reuse_count', 0) + 1
     ctx['reuse_count'] = reuse_cnt
     
-    # 신청 구분 및 비고 멘트 설정
+    # 신청 구분 및 비고 멘트, 반려 시 상태 설정
     new_dept = ctx['curr_dept_name']
     if is_direct:
         req_type = '운용전환(직접)'
         transfer_remark = f"{new_dept}로 관리전환(직접인계) 신청"
         prev_stat_log = '운용'
+        fail_fallback_status = '운용' # 반려되면 그냥 운용 상태 유지
     else:
         req_type = '운용전환(재사용)'
         transfer_remark = f"{new_dept}에서 사용 신청(재사용 {reuse_cnt}회차)"
         prev_stat_log = '반납'
-
-    display_status = '운용' if status == '확정' else ctx['curr_status']
+        fail_fallback_status = '반납' # 반려되면 반납 상태 유지
 
     # 승인 상태에 따른 표시 상태 (확정되면 '운용', 아니면 이전 상태인 '반납' 유지)
     if status == '확정':
         display_status = '운용'
     else:
-        display_status = ctx['prev_status'] # 보통 '반납' 상태
+        display_status = fail_fallback_status
 
     results['req'].append({
         '운용신청일자': req_date_fixed.strftime('%Y-%m-%d'),
@@ -420,10 +418,7 @@ def step_process_return(ctx, event_date):
     confirm_str = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
 
     # 반납 리스트 저장 시, 확정 상태여야만 '반납'으로 표기, 아니면 기존 '운용' 유지
-    if status == '확정':
-        display_status = '반납'
-    else:
-        display_status = '운용'
+    display_status = '반납' if status == '확정' else '운용'
 
     # 반납 리스트 저장
     results['return'].append({
@@ -443,6 +438,8 @@ def step_process_return(ctx, event_date):
         # 대장 및 이력 업데이트
         ctx['df_operation'].at[ctx['idx'], '운용상태'] = '반납'
         ctx['df_operation'].at[ctx['idx'], '운용부서'] = ''
+        ctx['prev_status'] = '운용'
+        ctx['curr_status'] = '반납'
         add_history(ctx['asset_id'], confirm_str, '운용', '반납', reason)
         
         ctx['sim_cursor_date'] = confirm_date
@@ -590,7 +587,12 @@ df_operation['수량'] = 1
 df_operation['물품고유번호'] = create_asset_ids(df_operation)
 # [수정] 초기 상태를 '운용'으로 설정 (취득 즉시 운용대장 등재)
 df_operation['운용상태'] = '운용' 
-df_operation['출력상태'] = '미출력'
+# [수정] 최초 운용 등재 시 PROBS_PRINT_STATUS 확률로 출력상태 설정
+df_operation['출력상태'] = np.random.choice(
+    ['미출력', '출력'],
+    size=len(df_operation),
+    p=PROBS_PRINT_STATUS
+)
 
 # [수정] 초기 운용확정일자는 취득 정리일자와 동일하게 설정
 df_operation['운용확정일자'] = df_operation['정리일자'].fillna(df_operation['취득일자'])
@@ -644,8 +646,6 @@ for row in df_operation.itertuples():
         'prev_status': '취득',
 
         'curr_condition': '신품',
-        'need_initial_req': True,
-        'loop_count': 0,
         'reuse_count': 0,
         'df_operation': df_operation,
         'assigned_limit_days': assigned_limit_days,  # <--- 현실 수명 할당
@@ -741,16 +741,15 @@ for row in df_operation.itertuples():
             result_action, reason = step_process_return(ctx, event_date)
             
             if result_action == '재사용':
-                # [수정] 재사용이 결정되면 -> 운용 전환 신청(Operation Transfer) 수행
-                if step_operation_transfer(ctx):
+                # 재사용이 결정되면 -> 운용 전환 신청(Operation Transfer) 수행
+                # 반납 후 재사용 신청 (is_direct=False)
+                if step_operation_transfer(ctx, is_direct=False):
                     # 운용 전환 성공 시, 다시 루프 처음(운용 상태)으로 돌아가서 다음 이벤트 대기
                     continue 
                 else:
                     break # 신청 반려 시 종료
             
             elif result_action == '불용진행':
-                ctx['curr_status'] = '반납'
-                # 반납했는데 쓸모없어서 불용으로 넘어감
                 step_process_disuse(ctx, '불용진행', inherited_reason=reason)
                 break # 불용으로 가면 운용 루프는 끝
             else:
