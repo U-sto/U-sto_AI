@@ -106,14 +106,17 @@ PROBS_STATUS_DISPOSAL = [0.93, 0.06, 0.01]
 
 PROB_SURPLUS_STORE = 0.9  # 잉여물품 보관 확률 (불용 스킵)
 
+# [NEW] 재사용 및 운용전환 관련 상수
+PROB_REUSE_FROM_RETURN = 0.05   # 반납품 중 재사용(운용전환)될 확률 (5% - 아주 소수)
+PROB_DIRECT_TRANSFER = 0.02     # 운용 중인 물품이 다른 부서로 바로 전환될 확률 (2% - 아주 소수)
+RECENT_USE_LIMIT_DAYS = 365 * 2 # "사용한 지 얼마 안 된" 기준 (2년 이내)
+
 # 처분 방식 확률 (신품/중고품일 때 vs 아닐 때)
 METHODS_DISPOSAL = ['매각', '폐기', '멸실', '도난']
 PROBS_DISPOSAL_GOOD = [0.85, 0.13, 0.01, 0.01] # 상태 좋음
 PROBS_DISPOSAL_BAD = [0.03, 0.95, 0.01, 0.01]  # 상태 나쁨 
 
 MAX_REUSE_CYCLES = 3     # 최대 재사용 횟수 제한
-
-PROB_SURPLUS_REUSE = 0.1  # 잉여물품, 사업종료 재사용 확률 (신품인 경우)
 
 # ---------------------------------------------------------
 # 1. 헬퍼 함수 & 데이터 구조 초기화
@@ -237,36 +240,53 @@ def get_approval_status_and_date(base_date, prob_dist=None, event_type=None, is_
 # 2. 단계별 상세 처리 함수 (Refactoring)
 # ---------------------------------------------------------
 
-def step_operation_req(ctx):
-    """A. 운용 신청/재신청 단계"""
-    # 컨텍스트에서 필요한 변수 추출
+def step_operation_transfer(ctx, is_direct=False):
+    """
+    A. 운용 전환 신청 단계 (재사용 또는 직접전환)
+    - 반납된 물품을 다른 부서가 사용하겠다고 신청하는 과정
+    param is_direct: True면 운용 중 직접 전환, False면 반납 후 재사용
+    """
+    # sim_cursor_date는 기본적으로 '반납확정일자' 시점이나,
+    # is_direct=True 인 경우에는 직접전환 이벤트 발생일(운용 중 전환일)을 의미함
     sim_date = ctx['sim_cursor_date']
     asset_id = ctx['asset_id']
     row = ctx['row']
     
-    # 운용신청일 생성
-    op_req_date = sim_date + timedelta(days=random.randint(1, 14))
+    # 신청일 결정
+    if is_direct:
+        # 직접 전환은 이벤트 발생일이 곧 신청일
+        op_req_date = sim_date
+    else:
+        # 반납 후 재사용은 반납확정일 + 1~7일 후
+        op_req_date = sim_date + timedelta(days=random.randint(1, 7))
+    
     if op_req_date > TODAY: return False # 미래 시점이면 종료
 
-    # 승인 상태 및 날짜 계산
-    # event_type 명시
+    # 승인 상태 및 날짜 계산 (운용전환은 대부분 확정됨)
     status, confirm_date, req_date_fixed = get_approval_status_and_date(op_req_date, event_type='op_req', is_op_req=True)
     
-    # 재사용 차수 명시
-    if ctx['need_initial_req']:
-        req_type = '신규운용'
-    else:
-        # 재사용 시 재사용 차수를 증가시키고 컨텍스트에 저장
-        reuse_cnt = ctx.get('reuse_count', 0) + 1
-        ctx['reuse_count'] = reuse_cnt
-        req_type = f'재사용({reuse_cnt}회차)' if reuse_cnt > 0 else '재사용'
+    # 재사용 차수 증가 (직접전환이든 재사용이든 횟수 차감하여 제한)
+    reuse_cnt = ctx.get('reuse_count', 0) + 1
+    ctx['reuse_count'] = reuse_cnt
     
-    # 승인 상태에 따른 표시 상태 결정
-    # 확정일 때만 '운용'으로 변경, 대기/반려는 기존 상태 유지 (취득 or 반납 등)
+    # 신청 구분 및 비고 멘트, 반려 시 상태 설정
+    new_dept = ctx['curr_dept_name']
+    if is_direct:
+        req_type = '운용전환(직접)'
+        transfer_remark = f"{new_dept}로 운용전환(직접인계) 신청"
+        prev_stat_log = '운용'
+        fail_fallback_status = '운용' # 반려되면 그냥 운용 상태 유지
+    else:
+        req_type = '운용전환(재사용)'
+        transfer_remark = f"{new_dept}에서 운용전환(재사용) 신청(재사용 {reuse_cnt}회차)"
+        prev_stat_log = '반납'
+        fail_fallback_status = '반납' # 반려되면 반납 상태 유지
+
+    # 승인 상태에 따른 표시 상태 (확정되면 '운용', 아니면 이전 상태인 '반납' 유지)
     if status == '확정':
         display_status = '운용'
     else:
-        display_status = ctx['curr_status']
+        display_status = fail_fallback_status
 
     results['req'].append({
         '운용신청일자': req_date_fixed.strftime('%Y-%m-%d'),
@@ -277,32 +297,31 @@ def step_operation_req(ctx):
         'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
         '물품고유번호': asset_id, 
         '취득일자': row.취득일자, '취득금액': row.취득금액,
-        '운용부서': ctx['curr_dept_name'], '사용자': row.비고, '신청구분': req_type,
+        '운용부서': ctx['curr_dept_name'], 
+        '사용자': transfer_remark, # 전환 신청 내용을 '사용자' 필드에 기입
+        '신청구분': req_type,
         '운용상태': display_status
     })
     
-    ctx['need_initial_req'] = False # 다음부터는 재사용
-
     if status != '확정': return False # 확정 안되면 시뮬레이션 중단
 
     # 상태 업데이트
     use_start_date = confirm_date
     ctx['sim_cursor_date'] = use_start_date
-    ctx['prev_status'] = ctx['curr_status']
+    ctx['prev_status'] = prev_stat_log
     ctx['curr_status'] = '운용'
     
+    # [Fix] 코드 리뷰 반영: 새로운 운용 시작일을 컨텍스트에 기록 (반납 시 사용 기간 계산용)
+    ctx['last_operation_start_date'] = confirm_date
+
     # 운용대장 업데이트 (메모리 상)
     ctx['df_operation'].at[ctx['idx'], '운용상태'] = '운용'
     ctx['df_operation'].at[ctx['idx'], '운용부서'] = ctx['curr_dept_name']
     ctx['df_operation'].at[ctx['idx'], '운용부서코드'] = ctx['curr_dept_code']
-    ctx['df_operation'].at[ctx['idx'], '운용확정일자'] = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
+    ctx['df_operation'].at[ctx['idx'], '운용확정일자'] = confirm_date.strftime('%Y-%m-%d')
     
-    # 최초 운용 시(0회차)에 출력 상태 결정
-    if ctx['loop_count'] == 0:
-        ctx['df_operation'].at[ctx['idx'], '출력상태'] = np.random.choice(['출력', '미출력'], p=PROBS_PRINT_STATUS)
-
     # 이력 추가
-    add_history(asset_id, confirm_date.strftime('%Y-%m-%d'), ctx['prev_status'], '운용', f'{req_type} 승인 및 사용 시작')
+    add_history(asset_id, confirm_date.strftime('%Y-%m-%d'), prev_stat_log, '운용', f'{req_type} 승인 ({new_dept})')
     
     return True
 
@@ -311,12 +330,17 @@ def step_determine_event(ctx):
     sim_date = ctx['sim_cursor_date']
     df_operation = ctx['df_operation']
     acq_date = pd.to_datetime(ctx['row'].취득일자)
-    use_start_date = pd.to_datetime(df_operation.at[ctx['idx'], '운용확정일자']) if '운용확정일자' in df_operation.columns and pd.notna(df_operation.at[ctx['idx'], '운용확정일자']) else sim_date
+
+    # 운용확정일자 가져오기
+    use_start_date = pd.to_datetime(df_operation.at[ctx['idx'], '운용확정일자']) \
+        if '운용확정일자' in df_operation.columns and pd.notna(df_operation.at[ctx['idx'], '운용확정일자']) \
+        else sim_date
     
-    age_days = (TODAY - acq_date).days
-    days_since_use = (TODAY - use_start_date).days
+    age_days = (sim_date - acq_date).days
+    days_since_use = (sim_date - use_start_date).days
 
     event_date = TODAY + timedelta(days=1)
+
     # -----------------------------------------------------------
     # 1. [불용신청] 현실 수명 도달 -> 물리적 한계로 인한 사용자 불용 신청
     # -----------------------------------------------------------
@@ -335,7 +359,17 @@ def step_determine_event(ctx):
             
         return '불용신청', calc_date
     # -----------------------------------------------------------
-    # 2. [반납] 업무적 사유(사업종료, 잉여 등)에 의한 랜덤 발생
+    # 2. [직접전환] 운용 중 다른 부서로 이동 (반납 없이 바로 운용전환) - NEW
+    # -----------------------------------------------------------
+    # 조건: 사용 시작 후 최소 3개월은 지났고, 아직 수명은 넉넉할 때
+    if days_since_use > 90 and age_days < (limit_real * 0.8):
+        if random.random() < PROB_DIRECT_TRANSFER:
+            transfer_date = sim_date + timedelta(days=random.randint(10, 180))
+            if transfer_date <= TODAY:
+                return '직접전환', transfer_date
+            
+    # -----------------------------------------------------------
+    # 3. [반납] 업무적 사유(사업종료, 잉여 등)에 의한 랜덤 발생
     # -----------------------------------------------------------
     # 확률 체크 (기존 로직 활용)
     is_return_triggered = False
@@ -368,7 +402,6 @@ def step_determine_event(ctx):
 def step_process_return(ctx, event_date):
     """
     C-1. 반납 처리 및 재사용 여부 결정
-    - 사업종료, 잉여물품, 공용전환 등 업무적 사유만 처리
     """
     # 1. 반납 사유 결정
     reason = np.random.choice(REASONS_RETURN, p=PROBS_RETURN_REASON)
@@ -392,10 +425,7 @@ def step_process_return(ctx, event_date):
     confirm_str = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
 
     # 반납 리스트 저장 시, 확정 상태여야만 '반납'으로 표기, 아니면 기존 '운용' 유지
-    if status == '확정':
-        display_status = '반납'
-    else:
-        display_status = '운용'
+    display_status = '반납' if status == '확정' else '운용'
 
     # 반납 리스트 저장
     results['return'].append({
@@ -415,16 +445,30 @@ def step_process_return(ctx, event_date):
         # 대장 및 이력 업데이트
         ctx['df_operation'].at[ctx['idx'], '운용상태'] = '반납'
         ctx['df_operation'].at[ctx['idx'], '운용부서'] = ''
+        ctx['prev_status'] = '운용'
+        ctx['curr_status'] = '반납'
         add_history(ctx['asset_id'], confirm_str, '운용', '반납', reason)
         
         ctx['sim_cursor_date'] = confirm_date
         
         # 반납 후 처리 경로
         # 1. 재사용 (부서 재배정)
+        # A. 신품이거나
+        # B. 중고품인데 사용한지 얼마 안 된 것 (RECENT_USE_LIMIT_DAYS 이내)
         # 2. 불용 진행 (재활용 불가 판단 등)
+        acq_dt = pd.to_datetime(ctx['row'].취득일자)
+        # 최근 운용 시작일을 기준으로 사용 기간 계산 (없으면 취득일자 기준)
+        operation_start_dt = ctx.get('last_operation_start_date')
+        if isinstance(operation_start_dt, str):
+            operation_start_dt = pd.to_datetime(operation_start_dt)
+        base_dt = operation_start_dt if operation_start_dt is not None and not pd.isna(operation_start_dt) else acq_dt
+        days_used = (confirm_date - base_dt).days
+        is_recent_used = (condition == '중고품' and days_used <= RECENT_USE_LIMIT_DAYS)
         
-        # 재사용 시도 (신품/중고품 상태일 때)
-        if condition in ['신품', '중고품'] and random.random() < PROB_SURPLUS_REUSE:
+        can_reuse = (condition == '신품') or is_recent_used
+        
+        # 후보군 중에서 '아주 소수'만 실제로 재사용 신청
+        if can_reuse and random.random() < PROB_REUSE_FROM_RETURN:
             # 부서 변경
             new_dept = random.choice(DEPT_MASTER_DATA)
             ctx['curr_dept_code'] = new_dept[0]
@@ -551,10 +595,21 @@ def step_process_disposal(ctx, condition, disuse_reason):
 print("⚙️ [Phase 2] 개별 자산 분화 및 고유번호 생성 중...")
 df_confirmed = df_acq[df_acq['승인상태'] == '확정'].copy()
 df_operation = df_confirmed.loc[df_confirmed.index.repeat(df_confirmed['수량'])].reset_index(drop=True)
+
+df_operation['취득금액'] = (df_operation['취득금액'] / df_operation['수량']).fillna(0).astype('int64')
 df_operation['수량'] = 1
 df_operation['물품고유번호'] = create_asset_ids(df_operation)
-df_operation['운용상태'] = '취득'
-df_operation['출력상태'] = '미출력'
+# [수정] 초기 상태를 '운용'으로 설정 (취득 즉시 운용대장 등재)
+df_operation['운용상태'] = '운용' 
+# [수정] 최초 운용 등재 시 PROBS_PRINT_STATUS 확률로 출력상태 설정
+df_operation['출력상태'] = np.random.choice(
+    ['출력', '미출력'],
+    size=len(df_operation),
+    p=PROBS_PRINT_STATUS
+)
+
+# [수정] 초기 운용확정일자는 취득 정리일자와 동일하게 설정
+df_operation['운용확정일자'] = df_operation['정리일자'].fillna(df_operation['취득일자'])
 
 print("⏳ [Phase 2] 자산 생애주기 시뮬레이션 시작 (운용 Loop)...")
 
@@ -599,51 +654,42 @@ for row in df_operation.itertuples():
         'clear_date_str': clear_date.strftime('%Y-%m-%d'),
         'curr_dept_name': row.운용부서,
         'curr_dept_code': row.운용부서코드,
-        'curr_status': '취득',
-        'prev_status': '-',
+
+        # [수정] 초기 상태 '운용'으로 시작
+        'curr_status': '운용', 
+        'prev_status': '취득',
+
         'curr_condition': '신품',
-        'need_initial_req': True,
-        'loop_count': 0,
+        'reuse_count': 0,
         'df_operation': df_operation,
         'assigned_limit_days': assigned_limit_days,  # <--- 현실 수명 할당
+        'last_operation_start_date': clear_date,
     }
-    # 1. 취득 이력 생성
-    add_history(ctx['asset_id'], ctx['clear_date_str'], '-', '취득', '신규 취득')
+    # 1. 취득 이력 생성 (동일 일자 내에서 운용 이력보다 먼저 발생하도록 미세 시간차 부여)
+    acq_dt = datetime.combine(clear_date.date(), datetime.min.time())
+    op_dt = acq_dt + timedelta(seconds=1)
+    acq_dt_str = acq_dt.strftime('%Y-%m-%d %H:%M:%S')
+    op_dt_str = op_dt.strftime('%Y-%m-%d %H:%M:%S')
+    add_history(ctx['asset_id'], acq_dt_str, '-', '취득', '신규 취득')
+
+    # 2. 곧바로 운용 등재 (전산상 자동 전환)
+    add_history(ctx['asset_id'], op_dt_str, '취득', '운용', '신규 운용 등재')
     # ==========================================================================
     # [NEW] 특수 물품(서버) 전용 로직 (시뮬레이션 루프 패스)
     # ==========================================================================
     if "통신서버" in row.G2B_목록명:
         # 1) 날짜 및 기본 정보 세팅
         acq_dt = pd.to_datetime(row.취득일자)
-        
-        # 2) 운용 신청 (공통: 구형이든 신형이든 일단 운용은 시작함)
-        # 운용 시작일은 취득 정리일 + 1~7일 랜덤
         op_start_date = ctx['sim_cursor_date'] + timedelta(days=random.randint(1, 7))
         if op_start_date > TODAY: op_start_date = TODAY
-        
-        # 운용신청 리스트 추가 (results['req'])
-        results['req'].append({
-            '운용신청일자': op_start_date.strftime('%Y-%m-%d'),
-            '등록일자': op_start_date.strftime('%Y-%m-%d'),
-            '운용확정일자': op_start_date.strftime('%Y-%m-%d'), # 서버는 즉시 확정 가정
-            '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
-            '승인상태': '확정',
-            'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
-            '물품고유번호': ctx['asset_id'], 
-            '취득일자': row.취득일자, '취득금액': row.취득금액,
-            '운용부서': row.운용부서, '사용자': row.비고, '신청구분': '신규운용',
-            '운용상태': '운용'  # [Fix] 누락된 키 추가
-        })
 
-        # 운용대장 업데이트 (메모리)
-        df_operation.at[ctx['idx'], '운용상태'] = '운용'
-        df_operation.at[ctx['idx'], '운용확정일자'] = op_start_date.strftime('%Y-%m-%d')
-        df_operation.at[ctx['idx'], '출력상태'] = '출력' # 서버는 관리태그 부착 필수
-        
-        # 이력 추가
-        add_history(ctx['asset_id'], op_start_date.strftime('%Y-%m-%d'), '취득', '운용', '신규운용 승인')
+        # [Fix] 코드 리뷰 반영: 서버의 최초 운용 시작일 기록
+        ctx['last_operation_start_date'] = op_start_date
 
-        # 3) 구형 서버 (2020년 이전) -> 운용하다가 불용/처분됨
+        # 서버는 관리태그 부착 필수 (초기 랜덤값 무시하고 강제 설정)
+        df_operation.at[ctx['idx'], '출력상태'] = '출력'
+
+        # 2) 구형 서버 (2020년 이전) -> 운용하다가 불용/처분됨
         if acq_dt.year < 2020:
             # 내용연수 6년 + 알파 시점에 불용
             life_years = 6
@@ -695,40 +741,49 @@ for row in df_operation.itertuples():
         continue # [중요] 아래 while 루프(랜덤 시뮬레이션)를 건너뜀
     # ==========================================================================
 
-    # 2. Lifecycle Loop (운용 -> 반납 -> 재사용/불용 -> 처분)
-    while ctx['loop_count'] <  MAX_REUSE_CYCLES:
+    # 2. Lifecycle Loop (운용 -> 반납 -> 운용전환(재사용)/불용 -> 처분)
+    while ctx['reuse_count'] <  MAX_REUSE_CYCLES:
 
-        # A. 운용 신청
-        if not step_operation_req(ctx):
-            break # 신청 안되거나 승인 안되면 종료
-        
-        # 운용 신청이 정상적으로 이루어진 경우에만 루프 카운트 증가
-        ctx['loop_count'] += 1
-
-        # B. 이벤트 결정 (유지, 반납)
+        # A. 이벤트 결정 (유지, 반납, 불용신청, 직접전환)
         event_type, event_date = step_determine_event(ctx)
 
         if event_type == '유지':
             break
+        
+        # [NEW] B-0. 운용 중 직접 전환 (소수 케이스)
+        elif event_type == '직접전환':
+            ctx['sim_cursor_date'] = event_date
+            # 부서 변경 (랜덤)
+            new_dept = random.choice(DEPT_MASTER_DATA)
+            ctx['curr_dept_code'] = new_dept[0]
+            ctx['curr_dept_name'] = new_dept[1]
+            
+            # 직접 전환 신청 수행 (is_direct=True)
+            if step_operation_transfer(ctx, is_direct=True):
+                continue # 성공 시 루프 유지 (새 부서에서 운용 시작)
+            else:
+                break # 실패 시 종료
 
-        # C-1. 반납 처리
+        # B-1. 반납 처리
         elif event_type == '반납':
             result_action, reason = step_process_return(ctx, event_date)
             
             if result_action == '재사용':
-                # 재사용 시, 다음 루프의 이력 생성을 위해 현재 상태를 '반납'으로 명시
-                ctx['curr_status'] = '반납'
-                ctx['prev_status'] = '반납'
-                continue # 루프 처음으로 (운용신청 다시 함)
+                # 재사용이 결정되면 -> 운용 전환 신청(Operation Transfer) 수행
+                # 반납 후 재사용 신청 (is_direct=False)
+                if step_operation_transfer(ctx, is_direct=False):
+                    # 운용 전환 성공 시, 다시 루프 처음(운용 상태)으로 돌아가서 다음 이벤트 대기
+                    continue 
+                else:
+                    break # 신청 반려 시 종료
+            
             elif result_action == '불용진행':
-                ctx['curr_status'] = '반납'
-                # 반납했는데 쓸모없어서 불용으로 넘어감
                 step_process_disuse(ctx, '불용진행', inherited_reason=reason)
                 break # 불용으로 가면 운용 루프는 끝
             else:
                 break # 종료
 
-        # C-2. 물리적 수명 만료 (불용신청)
+        # B-2. 물리적 수명 만료 (불용신청)
         elif event_type == '불용신청':
             ctx['sim_cursor_date'] = event_date
             step_process_disuse(ctx, '불용신청')
@@ -801,11 +856,17 @@ df_disposal.to_csv(os.path.join(DATA_DIR, '06_01_disposal_list.csv'), index=Fals
 df_history.to_csv(os.path.join(DATA_DIR, '99_asset_status_history.csv'), index=False, encoding='utf-8-sig')
 
 print("🎉 [Phase 2] 생애주기 시뮬레이션 및 파일 생성 완료!")
-print(f"   - 운용 자산: {len(df_operation)}건")
-print(f"   - 상태 이력: {len(df_history)}건")
-if not df_history.empty:
-    for status in ['취득', '운용', '반납', '불용', '처분']:
-        print(f"      └ {status}: {len(df_history[df_history['(변경)운용상태'] == status])}건")
+print(f"   - 총 자산 규모: {len(df_operation)}건")
+
+# [수정] 이력(History) 횟수가 아닌, 현재 대장(Operation) 상의 '최종 상태' 분포를 출력
+print("\n📊 [현재 자산 상태 현황]")
+current_status_counts = df_operation['운용상태'].value_counts()
+for status, count in current_status_counts.items():
+    print(f"      └ {status}: {count}건")
+
+# 참고용으로 총 이력 건수만 한 줄로 표시
+print(f"\n   (참고: 생성된 전체 상태 변경 이력 로그는 총 {len(df_history)}건 입니다.)")
+
 # [NEW] 물품별 수량 통계 출력 (Phase 2 결과 기준)
-print("   - 물품별 운용 수량 (상위 22개):")
+print("\n📦 물품별 보유 수량 (상위 22개):")
 print(df_operation['G2B_목록명'].value_counts().head(22))
