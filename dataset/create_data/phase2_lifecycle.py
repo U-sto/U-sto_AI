@@ -311,6 +311,9 @@ def step_operation_transfer(ctx, is_direct=False):
     ctx['prev_status'] = prev_stat_log
     ctx['curr_status'] = '운용'
     
+    # [Fix] 코드 리뷰 반영: 새로운 운용 시작일을 컨텍스트에 기록 (반납 시 사용 기간 계산용)
+    ctx['last_operation_start_date'] = confirm_date
+
     # 운용대장 업데이트 (메모리 상)
     ctx['df_operation'].at[ctx['idx'], '운용상태'] = '운용'
     ctx['df_operation'].at[ctx['idx'], '운용부서'] = ctx['curr_dept_name']
@@ -672,8 +675,13 @@ for row in df_operation.itertuples():
     if "통신서버" in row.G2B_목록명:
         # 1) 날짜 및 기본 정보 세팅
         acq_dt = pd.to_datetime(row.취득일자)
+        op_start_date = ctx['sim_cursor_date'] + timedelta(days=random.randint(1, 7))
+        if op_start_date > TODAY: op_start_date = TODAY
 
-        # [Fix] 서버는 관리태그 부착 필수 (초기 랜덤값 무시하고 강제 설정)
+        # [Fix] 코드 리뷰 반영: 서버의 최초 운용 시작일 기록
+        ctx['last_operation_start_date'] = op_start_date
+
+        # 서버는 관리태그 부착 필수 (초기 랜덤값 무시하고 강제 설정)
         df_operation.at[ctx['idx'], '출력상태'] = '출력'
 
         # 2) 구형 서버 (2020년 이전) -> 운용하다가 불용/처분됨
@@ -693,7 +701,7 @@ for row in df_operation.itertuples():
                 '물품고유번호': ctx['asset_id'], 
                 '취득일자': row.취득일자, '취득금액': row.취득금액,
                 '정리일자': row.정리일자, '운용부서': row.운용부서, 
-                '운용상태' : '불용', '내용연수': row.내용연수,
+                '운용상태' : '운용', '내용연수': row.내용연수,
                 '물품상태': '폐품', '사유': disuse_reason
             })
             
