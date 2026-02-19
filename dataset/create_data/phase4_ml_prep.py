@@ -47,7 +47,7 @@ print(f"   - 원천 데이터 로드 완료: 운용 대장 {len(df_op)}건")
 # 최신 이력(확정일자 기준 내림차순) 하나만 남기고 중복을 제거해야 1:1 병합이 깔끔하게 됨
 def drop_duplicates_safe(df, date_col, conf_date_col):
     if not df.empty:
-# 원본 DataFrame이 함수 호출로 인해 예상치 못하게 변경되지 않도록 복사본에서 작업
+        # 원본 DataFrame이 함수 호출로 인해 예상치 못하게 변경되지 않도록 복사본에서 작업
         df = df.copy()
         # 기준일자 컬럼을 datetime으로 변환
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
