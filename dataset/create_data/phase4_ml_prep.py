@@ -75,12 +75,14 @@ def get_existing_cols(df, target_cols):
 
 # 운용 마스터에 불용, 처분 이력을 Left Join으로 붙임
 # (1) 불용 이력 병합
-cols_du_exist = get_existing_cols(df_du, ['물품고유번호', '불용일자', '불용확정일자', '사유', '승인상태'])
-df_merged = pd.merge(df_op, df_du[cols_du_exist].rename(columns={'사유': '불용사유', '승인상태': '불용승인상태'}), on='물품고유번호', how='left')
+df_du_sub = df_du[['물품고유번호', '불용일자', '불용확정일자', '사유', '승인상태']].copy()
+df_du_sub = df_du_sub.rename(columns={'사유': '불용사유', '승인상태': '불용승인상태'})
+df_merged = pd.merge(df_op, df_du_sub, on='물품고유번호', how='left')
 
 # (2) 처분 이력 병합
-cols_dp_exist = get_existing_cols(df_dp, ['물품고유번호', '처분방식', '처분확정일자', '물품상태', '승인상태'])
-df_merged = pd.merge(df_merged, df_dp[cols_dp_exist].rename(columns={'승인상태': '처분승인상태'}), on='물품고유번호', how='left')
+df_dp_sub = df_dp[['물품고유번호', '처분방식', '처분확정일자', '물품상태', '승인상태']].copy()
+df_dp_sub = df_dp_sub.rename(columns={'승인상태': '처분승인상태'})
+df_merged = pd.merge(df_merged, df_dp_sub, on='물품고유번호', how='left')
 # ---------------------------------------------------------
 # 2. 전처리 및 결측치 보정 
 # ---------------------------------------------------------
@@ -107,7 +109,6 @@ df_merged['기준일'] = df_merged['최종종료일'].fillna(today)
 
 # 머신러닝용 DF 구성 (확정 상태 체크를 위해 관련 컬럼 일시 포함)
 df_final = df_merged.copy()
-df_final['기준일'] = df_merged['기준일']
 
 # 안전한 컬럼 매핑 로직
 df_final = pd.DataFrame(index=df_merged.index)
@@ -127,6 +128,11 @@ df_final['물품분류명'] = df_merged['물품분류명'] if '물품분류명' 
 df_final['운용부서명'] = df_merged['운용부서'] if '운용부서' in df_merged.columns else df_merged.get('운용부서명', pd.NA)
 df_final['내용연수'] = df_merged['내용연수'] if '내용연수' in df_merged.columns else pd.Series(5, index=df_merged.index)
 
+df_final['불용승인상태'] = df_merged.get('불용승인상태')              # 불용 승인상태 컬럼 보존
+df_final['불용확정일자'] = df_merged.get('불용확정일자')              # 불용 확정일자 컬럼 보존
+df_final['처분승인상태'] = df_merged.get('처분승인상태')              # 처분 승인상태 컬럼 보존
+df_final['처분확정일자'] = df_merged.get('처분확정일자')  
+
 # 결측치 보정 (가격이 0이거나 없는 경우 중앙값으로, 내용연수가 없으면 최빈값(보통 5년)으로)
 valid_prices = df_final.loc[df_final['취득금액'] > 0, '취득금액']
 median_price = valid_prices.median() if not valid_prices.empty else 1000000 # 기본값으로 100만원 사용
@@ -143,18 +149,17 @@ print("   3. 파생변수 생성 및 이상치 처리...")
 # 운용연차 산출 (년 단위 환산)
 df_final['운용연차'] = ((df_final['기준일'] - df_final['취득일자']).dt.days.clip(lower=0) / 365.0).round(2)
 
-# 안전하게 시리즈를 가져오는 헬퍼 함수
+# 안전한 데이터 추출 함수
 def safe_get_series(df, col_name, fill_val=np.nan):
     if col_name in df.columns:
         return df[col_name]
-    # 날짜 데이터 형식인 경우 datetime64 시리즈 반환, 아닌 경우 일반 시리즈 반환
-    if '일자' in col_name:
-        return pd.Series(pd.NaT, index=df.index)
     return pd.Series(fill_val, index=df.index)
 
-# [FIX] 에러가 났던 지점: safe_get_series를 사용하여 None 에러 방지
+# [FIX] 에러가 났던 지점: .get() 대신 safe_get_series 사용
+# 처분 또는 불용이 '확정'되었거나 날짜가 기록된 경우를 확정으로 간주
 disposal_confirmed = (safe_get_series(df_final, '처분승인상태', '') == '확정') | (safe_get_series(df_final, '처분확정일자').notna())
 disuse_confirmed = (safe_get_series(df_final, '불용승인상태', '') == '확정') | (safe_get_series(df_final, '불용확정일자').notna())
+
 # 처분방식/불용사유 + 확정 여부를 함께 고려
 is_disposal = disposal_confirmed & df_final['처분방식'].isin(['폐기', '멸실'])
 is_sale_eol = (
