@@ -327,78 +327,93 @@ def step_operation_transfer(ctx, is_direct=False):
     return True
 
 def step_determine_event(ctx):
-    """B. 운용 중 사건 발생 결정"""
-    sim_date = ctx['sim_cursor_date']
-    df_operation = ctx['df_operation']
-    acq_date = pd.to_datetime(ctx['row'].취득일자)
-
-    # 운용확정일자 가져오기
-    use_start_date = pd.to_datetime(df_operation.at[ctx['idx'], '운용확정일자']) \
-        if '운용확정일자' in df_operation.columns and pd.notna(df_operation.at[ctx['idx'], '운용확정일자']) \
-        else sim_date
+    """
+    B. 운용 중 차기 사건 발생일 결정 (Look-ahead 상세 버전)
+    기존의 모든 확률 및 기간 조건(30일/90일/3년/5년)을 유지하며 미래 시점을 계산합니다.
+    """
+    sim_date = ctx['sim_cursor_date']  # 현재 시뮬레이션 시점
+    row = ctx['row']
+    acq_date = pd.to_datetime(row.취득일자)
+    use_start_date = pd.to_datetime(ctx['df_operation'].at[ctx['idx'], '운용확정일자'])
     
-    age_days = (sim_date - acq_date).days
-    days_since_use = (sim_date - use_start_date).days
-
-    event_date = TODAY + timedelta(days=1)
-
-    # -----------------------------------------------------------
-    # 1. [불용신청] 현실 수명 도달 -> 물리적 한계로 인한 사용자 불용 신청
-    # -----------------------------------------------------------
+    # 현실적 기대 수명 (고정 미래 시점)
     limit_real = ctx.get('assigned_limit_days', 365*5)
     
-    if age_days >= limit_real:
-        # 수명 도달 시점을 이벤트 발생일로 정확히 계산
-        eol_date = acq_date + timedelta(days=limit_real)
+    # 발생 가능한 이벤트 후보 리스트
+    candidates = []
+
+    # -----------------------------------------------------------
+    # 1. [불용 예정일] 물리적 수명 도달 시점 계산
+    # -----------------------------------------------------------
+    eol_date = acq_date + timedelta(days=limit_real)
+    # EOL이 오늘(TODAY) 이전/당일이면 발생 가능 후보에 추가하되,
+    # 실제 발생일은 시뮬레이션 커서(sim_date)보다 과거로 가지 않도록 보정
+    if eol_date <= TODAY:
+        eol_event_date = max(sim_date, eol_date)
+        candidates.append(('불용신청', eol_event_date))
+
+    # -----------------------------------------------------------
+    # 2. [직접전환 예정일] 운용 중 부서 이동 (Look-ahead)
+    # -----------------------------------------------------------
+    # 조건: 사용 시작 후 최소 90일은 지나야 하고, 수명의 80% 이내여야 함
+    if random.random() < PROB_DIRECT_TRANSFER:
+        # 발생 가능 시작일: (사용 시작 90일 후)와 (현재 시점) 중 늦은 날
+        earliest_possible = max(sim_date, use_start_date + timedelta(days=90))
+        # 발생 가능 종료일: 수명의 80% 시점
+        latest_possible = acq_date + timedelta(days=int(limit_real * 0.8))
         
-        # 이벤트 날짜는 오늘을 넘을 수 없음
-        calc_date = min(eol_date, TODAY)
-        
-        # 단, 시뮬레이션 커서(이전 단계 날짜)보다 과거일 수는 없음 (시간 역행 방지)
-        if calc_date < sim_date:
-            calc_date = sim_date
+        if earliest_possible < latest_possible and earliest_possible <= TODAY:
+            # [Copilot 리뷰 반영] 발생 가능 종료일을 넘지 않도록 랜덤 범위 제한
+            max_days_allowed = (latest_possible - earliest_possible).days
+            # 최소 10일에서 최대 180일 사이로 하되, 가용 기간(max_days_allowed)을 넘지 않도록 설정
+            days_to_add = random.randint(10, max(10, min(180, max_days_allowed)))
+            transfer_date = earliest_possible + timedelta(days=days_to_add)
             
-        return '불용신청', calc_date
+            if sim_date <= transfer_date <= min(latest_possible, TODAY):
+                candidates.append(('직접전환', transfer_date))
+
     # -----------------------------------------------------------
-    # 2. [직접전환] 운용 중 다른 부서로 이동 (반납 없이 바로 운용전환) - NEW
+    # 3. [반납 예정일] 업무적 사유에 의한 발생 (Look-ahead)
     # -----------------------------------------------------------
-    # 조건: 사용 시작 후 최소 3개월은 지났고, 아직 수명은 넉넉할 때
-    if days_since_use > 90 and age_days < (limit_real * 0.8):
-        if random.random() < PROB_DIRECT_TRANSFER:
-            transfer_date = sim_date + timedelta(days=random.randint(10, 180))
-            if transfer_date <= TODAY:
-                return '직접전환', transfer_date
-            
-    # -----------------------------------------------------------
-    # 3. [반납] 업무적 사유(사업종료, 잉여 등)에 의한 랜덤 발생
-    # -----------------------------------------------------------
-    # 확률 체크 (기존 로직 활용)
     is_return_triggered = False
-    
-    # (1) 조기 반납 (1%)
+    return_date = None
+
+    # (1) 조기 반납 (1% 확률)
     if random.random() < PROB_EARLY_RETURN:
-        early_date = sim_date + timedelta(days=random.randint(1, 30))
-        if early_date <= TODAY:
-            event_date = early_date
+        # 시뮬레이션 시점 기준 1~30일 이내 발생
+        return_date = sim_date + timedelta(days=random.randint(1, 30))
+        is_return_triggered = True
+
+    # (2) 사용 기간에 따른 일반 반납 확률 (조기 반납 안 터졌을 때)
+    if not is_return_triggered:
+        age_days_at_sim = (sim_date - acq_date).days
+        prob = 0
+        if age_days_at_sim > (365 * 5):
+            prob = PROB_RETURN_OVER_5Y
+        elif age_days_at_sim > (365 * 3):
+            prob = PROB_RETURN_OVER_3Y
+        
+        if random.random() < prob:
+            # 조건: 최소 30일은 사용 후 반납 (기존 로직 유지)
+            earliest_ret = max(sim_date, use_start_date + timedelta(days=30))
+            return_date = earliest_ret + timedelta(days=random.randint(30, 365))
             is_return_triggered = True
 
-    # (2) 사용 기간에 따른 일반 반납 확률
-    if not is_return_triggered and age_days > (365 * 3):
-        prob = PROB_RETURN_OVER_5Y if age_days > (365 * 5) else PROB_RETURN_OVER_3Y
-        if random.random() < prob:
-            if days_since_use >= 30:
-                calc_date = sim_date + timedelta(days=random.randint(30, 365))
-                event_date = calc_date
-                is_return_triggered = True
+    # 반납이 확정되었고 날짜가 범위 내라면 후보 추가
+    if is_return_triggered and return_date:
+        if sim_date <= return_date <= TODAY:
+            candidates.append(('반납', return_date))
 
-    if is_return_triggered:
-        if event_date > TODAY:
-            return '유지', event_date
-        else:
-            return '반납', event_date # 반납은 반납대로
+    # -----------------------------------------------------------
+    # 4. [최종 결정] 가장 먼저 터지는 사건 선택
+    # -----------------------------------------------------------
+    if not candidates:
+        # 아무 일도 일어나지 않으면 시뮬레이션 종료 시점(오늘+1) 반환
+        return '유지', TODAY + timedelta(days=1)
 
-    # 아무 일도 없으면 유지
-    return '유지', event_date
+    # 날짜 순으로 정렬하여 가장 빠른 이벤트 반환
+    candidates.sort(key=lambda x: x[1])
+    return candidates[0]
 
 def step_process_return(ctx, event_date):
     """
@@ -751,8 +766,11 @@ for row in df_operation.itertuples():
         if event_type == '유지':
             break
         
+        # 모든 이벤트 처리 전에 시뮬레이션 커서를 이벤트 발생 시점으로 이동
+        ctx['sim_cursor_date'] = event_date
+
         # [NEW] B-0. 운용 중 직접 전환 (소수 케이스)
-        elif event_type == '직접전환':
+        if event_type == '직접전환':
             ctx['sim_cursor_date'] = event_date
             # 부서 변경 (랜덤)
             new_dept = random.choice(DEPT_MASTER_DATA)
