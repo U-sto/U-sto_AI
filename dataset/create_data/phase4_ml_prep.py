@@ -49,10 +49,25 @@ print(f"   - 원천 데이터 로드 완료: 운용 대장 {len(df_op)}건")
 # 최신 이력(확정일자 기준 내림차순) 하나만 남기고 중복을 제거해야 1:1 병합이 깔끔하게 됨
 def drop_duplicates_safe(df, date_col, conf_date_col):
     if not df.empty:
+# 원본 DataFrame이 함수 호출로 인해 예상치 못하게 변경되지 않도록 복사본에서 작업
+        df = df.copy()
+        # 기준일자 컬럼을 datetime으로 변환
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
         if conf_date_col in df.columns:
+            # 확정일자 컬럼이 존재하면 이를 기준으로도 정렬
             df[conf_date_col] = pd.to_datetime(df[conf_date_col], errors='coerce')
-            df = df.sort_values(by=['물품고유번호', conf_date_col, date_col], ascending=[True, False, False])
+            df = df.sort_values(
+                by=['물품고유번호', conf_date_col, date_col],
+                ascending=[True, False, False],
+                kind='mergesort'
+            )
+        else:
+            # 확정일자가 없더라도 최소한 물품고유번호+기준일자 기준으로 최신 이력을 선택
+            df = df.sort_values(
+                by=['물품고유번호', date_col],
+                ascending=[True, False],
+                kind='mergesort'
+            )
         return df.drop_duplicates(subset=['물품고유번호'], keep='first')
     return df
 
@@ -65,11 +80,22 @@ df_dp = drop_duplicates_safe(df_dp, '처분확정일자', '처분확정일자') 
 # ---------------------------------------------------------
 print("   1. 생애주기 병합 (운용+반납+불용+처분)...")
 
-# 운용 마스터에 반납, 불용, 처분 이력을 Left Join으로 붙임
-df_merged = pd.merge(df_op, df_rt[['물품고유번호', '반납일자', '반납확정일자', '사유', '승인상태']].rename(columns={'승인상태': '반납승인상태', '사유': '반납사유'}), on='물품고유번호', how='left')
-df_merged = pd.merge(df_merged, df_du[['물품고유번호', '불용일자', '불용확정일자', '사유', '승인상태']].rename(columns={'사유': '불용사유', '승인상태': '불용승인상태'}), on='물품고유번호', how='left')
-df_merged = pd.merge(df_merged, df_dp[['물품고유번호', '처분방식', '처분확정일자', '물품상태', '승인상태']].rename(columns={'승인상태': '처분승인상태'}), on='물품고유번호', how='left')
+# [Review 반영] 병합 전 컬럼 존재 여부 확인 함수
+def get_existing_cols(df, target_cols):
+    return [c for c in target_cols if c in df.columns]
 
+# 운용 마스터에 반납, 불용, 처분 이력을 Left Join으로 붙임
+# (1) 반납 이력 병합
+cols_rt_exist = get_existing_cols(df_rt, ['물품고유번호', '반납일자', '반납확정일자', '사유', '승인상태'])
+df_merged = pd.merge(df_op, df_rt[cols_rt_exist].rename(columns={'승인상태': '반납승인상태', '사유': '반납사유'}), on='물품고유번호', how='left')
+
+# (2) 불용 이력 병합
+cols_du_exist = get_existing_cols(df_du, ['물품고유번호', '불용일자', '불용확정일자', '사유', '승인상태'])
+df_merged = pd.merge(df_merged, df_du[cols_du_exist].rename(columns={'사유': '불용사유', '승인상태': '불용승인상태'}), on='물품고유번호', how='left')
+
+# (3) 처분 이력 병합
+cols_dp_exist = get_existing_cols(df_dp, ['물품고유번호', '처분방식', '처분확정일자', '물품상태', '승인상태'])
+df_merged = pd.merge(df_merged, df_dp[cols_dp_exist].rename(columns={'승인상태': '처분승인상태'}), on='물품고유번호', how='left')
 # ---------------------------------------------------------
 # 2. 전처리 및 결측치 보정 
 # ---------------------------------------------------------
@@ -82,7 +108,11 @@ for col in date_cols:
 
 # 수명 계산의 끝점이 되는 '종료일'을 구하는 로직
 # 1순위: 처분 > 2순위: 불용 > 3순위: 반납 순으로 우선순위를 둠.
-confirmed_end_date = df_merged.get('처분확정일자').combine_first(df_merged.get('불용확정일자')).combine_first(df_merged.get('반납확정일자'))
+confirmed_end_date = (
+    df_merged.get('처분확정일자', pd.Series(index=df_merged.index, dtype='datetime64[ns]'))
+    .combine_first(df_merged.get('불용확정일자', pd.Series(index=df_merged.index, dtype='datetime64[ns]')))
+    .combine_first(df_merged.get('반납확정일자', pd.Series(index=df_merged.index, dtype='datetime64[ns]')))
+)
 valid_ret_date = df_merged['반납일자'].where(df_merged['반납승인상태'] == '확정')
 valid_disuse_date = df_merged['불용일자'].where(df_merged['불용승인상태'] == '확정')
 fallback_end_date = valid_ret_date.combine_first(valid_disuse_date)
@@ -91,16 +121,32 @@ df_merged['최종종료일'] = confirmed_end_date.combine_first(fallback_end_dat
 # 종료일이 없으면 '현재 운용 중'이라는 뜻이므로 기준일을 today로 설정
 df_merged['기준일'] = df_merged['최종종료일'].fillna(today)
 
-# 머신러닝용 최종 데이터프레임 뼈대 구축
-df_final = df_merged[['물품고유번호', '취득금액', '운용부서코드', '캠퍼스', '취득일자', '반납일자', '불용일자', '반납사유', '불용사유', '물품상태', '처분방식', '기준일']].copy()
-df_final['G2B목록명'] = df_merged.get('G2B_목록명', df_merged.get('G2B목록명'))
-df_final['물품분류명'] = df_merged.get('물품분류명', df_final['G2B목록명'])
-df_final['운용부서명'] = df_merged.get('운용부서', df_merged.get('운용부서명'))
-df_final['내용연수'] = df_merged.get('내용연수')
+# 안전한 컬럼 매핑 로직
+df_final = pd.DataFrame(index=df_merged.index)
+df_final['물품고유번호'] = df_merged['물품고유번호']
+df_final['취득금액'] = df_merged.get('취득금액', 0)
+df_final['운용부서코드'] = df_merged.get('운용부서코드')
+df_final['캠퍼스'] = df_merged.get('캠퍼스')
+df_final['취득일자'] = df_merged.get('취득일자')
+df_final['반납일자'] = df_merged.get('반납일자')
+df_final['불용일자'] = df_merged.get('불용일자')
+df_final['반납사유'] = df_merged.get('반납사유')
+df_final['불용사유'] = df_merged.get('불용사유')
+df_final['물품상태'] = df_merged.get('물품상태')
+df_final['처분방식'] = df_merged.get('처분방식')
+df_final['기준일'] = df_merged['기준일']
+
+# Fallback을 포함한 명칭 매핑
+df_final['G2B목록명'] = df_merged['G2B_목록명'] if 'G2B_목록명' in df_merged.columns else df_merged.get('G2B목록명', pd.NA)
+df_final['물품분류명'] = df_merged['물품분류명'] if '물품분류명' in df_merged.columns else df_final['G2B목록명']
+df_final['운용부서명'] = df_merged['운용부서'] if '운용부서' in df_merged.columns else df_merged.get('운용부서명', pd.NA)
+df_final['내용연수'] = df_merged['내용연수'] if '내용연수' in df_merged.columns else pd.Series(5, index=df_merged.index)
 
 # 결측치 보정 (가격이 0이거나 없는 경우 중앙값으로, 내용연수가 없으면 최빈값(보통 5년)으로)
-median_price = df_final.loc[df_final['취득금액'] > 0, '취득금액'].median()
+valid_prices = df_final.loc[df_final['취득금액'] > 0, '취득금액']
+median_price = valid_prices.median() if not valid_prices.empty else 1000000 # 기본값으로 100만원 사용
 df_final['취득금액'] = df_final['취득금액'].fillna(median_price).replace(0, median_price)
+
 df_final['내용연수'] = df_final['내용연수'].fillna(df_final['내용연수'].mode()[0] if not df_final['내용연수'].mode().empty else 5)
 df_final = df_final.dropna(subset=['취득일자']) # 시작일이 없으면 수명 계산이 불가하므로 제거
 
@@ -116,41 +162,42 @@ df_final['운용연차'] = ((df_final['기준일'] - df_final['취득일자']).d
 is_disposal = df_final['처분방식'].isin(['폐기', '멸실'])
 is_sale_eol = (df_final['처분방식'] == '매각') & df_final['불용사유'].isin(['고장/파손', '노후화(성능저하)', '수리비용과다', '구형화', '내구연한 경과(노후화)'])
 is_return_repair = df_final['반납일자'].notna() & (df_final['물품상태'] == '정비필요품')
-
 df_final['학습데이터여부'] = np.where(is_disposal | is_sale_eol | is_return_repair, 'Y', 'N')
 
 # --- IQR 기반 이상치(Outlier) 제거 ---
 # 이유: 학습 데이터에 수명이 0.1년이거나 50년인 극단적 데이터가 섞여 있으면 모델이 흔들림.
+# [Review 반영] IQR 기반 이상치 제거 전 유효 데이터 체크
 train_cond = df_final['학습데이터여부'] == 'Y'
-Q1 = df_final.loc[train_cond, '운용연차'].quantile(0.25)
-Q3 = df_final.loc[train_cond, '운용연차'].quantile(0.75)
-IQR = Q3 - Q1
-lower_bound = Q1 - 1.5 * IQR
-upper_bound = Q3 + 1.5 * IQR
+if train_cond.sum() > 0 and df_final.loc[train_cond, '운용연차'].notna().any():
+    Q1 = df_final.loc[train_cond, '운용연차'].quantile(0.25)
+    Q3 = df_final.loc[train_cond, '운용연차'].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
 
-# 1. 이상치로 판별된 데이터만 따로 뽑아보기
-outlier_mask = (df_final['학습데이터여부'] == 'Y') & ((df_final['운용연차'] < lower_bound) | (df_final['운용연차'] > upper_bound))
-df_outliers = df_final[outlier_mask]
-
-# 2. 이상치 데이터 통계 출력 (네가 원했던 부분!)
-if not df_outliers.empty:
-    outlier_min = df_outliers['운용연차'].min()
-    outlier_max = df_outliers['운용연차'].max()
-    outlier_mode = df_outliers['운용연차'].mode()[0] if not df_outliers['운용연차'].mode().empty else '없음'
+    # 이상치 제외 및 결과 출력
+    outlier_mask = (df_final['학습데이터여부'] == 'Y') & ((df_final['운용연차'] < lower_bound) | (df_final['운용연차'] > upper_bound))
+    df_outliers = df_final[outlier_mask]
     
-    print(f"      * [이상치 상세 분석] 제외 예정인 데이터 {len(df_outliers)}건의 수명 정보:")
-    print(f"        - 정상 허용 범위: {lower_bound:.2f}년 ~ {upper_bound:.2f}년")
-    print(f"        - 통계 ➔ 최소값: {outlier_min}년 / 최대값: {outlier_max}년 / 최빈값: {outlier_mode}년")
-    
-    # 어떤 물품들이 주로 걸렸는지 상위 5개 품목명 확인
-    top_items = df_outliers['G2B목록명'].value_counts().head(3).to_dict()
-    print(f"        - 주로 걸러진 품목 Top 3: {top_items}")
+    if not df_outliers.empty:
+        print(f"      * [이상치 제거] 정상범위({lower_bound:.2f}~{upper_bound:.2f}년) 외 {len(df_outliers)}건 제외")
 
-# 3. 예측해야 할 데이터('N')는 살리고, 학습 데이터('Y') 중에서 정상 범주에 있는 것만 남김
-valid_data_mask = (df_final['학습데이터여부'] == 'N') | ((df_final['학습데이터여부'] == 'Y') & (df_final['운용연차'] >= lower_bound) & (df_final['운용연차'] <= upper_bound))
-removed_count = len(df_final) - valid_data_mask.sum()
-df_final = df_final[valid_data_mask].copy()
-print(f"      * [이상치 제거] 극단적 수명을 가진 학습 데이터 {removed_count}건 제외 (정상범위: {lower_bound:.2f} ~ {upper_bound:.2f}년)")
+    valid_data_mask = (df_final['학습데이터여부'] == 'N') | ((df_final['학습데이터여부'] == 'Y') & (~outlier_mask))
+    df_final = df_final[valid_data_mask].copy()
+
+    # 이상치 데이터 통계 출력 (네가 원했던 부분!)
+    if not df_outliers.empty:
+        outlier_min = df_outliers['운용연차'].min()
+        outlier_max = df_outliers['운용연차'].max()
+        outlier_mode = df_outliers['운용연차'].mode()[0] if not df_outliers['운용연차'].mode().empty else '없음'
+        
+        print(f"      * [이상치 상세 분석] 제외 예정인 데이터 {len(df_outliers)}건의 수명 정보:")
+        print(f"        - 정상 허용 범위: {lower_bound:.2f}년 ~ {upper_bound:.2f}년")
+        print(f"        - 통계 ➔ 최소값: {outlier_min}년 / 최대값: {outlier_max}년 / 최빈값: {outlier_mode}년")
+        
+        # 어떤 물품들이 주로 걸렸는지 상위 5개 품목명 확인
+        top_items = df_outliers['G2B목록명'].value_counts().head(3).to_dict()
+        print(f"        - 주로 걸러진 품목 Top 3: {top_items}")
 
 # 추가 파생 변수 산출
 df_final['잔여내용연수'] = (df_final['내용연수'] - df_final['운용연차']).round(2)
@@ -164,7 +211,7 @@ def get_severity(dept_name):
 
 df_final['부서가혹도'] = df_final['운용부서명'].apply(get_severity)
 df_final['누적사용부하'] = (df_final['운용연차'] * df_final['부서가혹도']).round(2)
-df_final['고장임박도'] = ((df_final['운용연차'] / df_final['내용연수']) ** 2).clip(0, 1).round(2)
+df_final['고장임박도'] = ((df_final['운용연차'] / df_final['내용연수'].replace(0, np.nan)) ** 2).clip(0, 1).round(2)
 
 # 예산/구매 관련 지표
 df_final['가격민감도'] = (np.log1p(df_final['취득금액']) / np.log1p(100000000)).clip(0, 1).round(2)
@@ -177,7 +224,7 @@ df_final['취득월'] = df_final['취득일자'].dt.month
 # ---------------------------------------------------------
 # 타겟 세팅 (실제수명: 학습에 쓰일 Y값)
 df_final['실제수명'] = np.nan
-df_final.loc[df_final['학습데이터여부'] == 'Y', '실제수명'] = df_final['운용연차']
+df_final.loc[df_final['학습데이터여부'] == 'Y', '실제수명'] = df_final.loc[df_final['학습데이터여부'] == 'Y', '운용연차']
 
 # 컬럼정의서 필수 산출물 빈칸(Placeholder) 처리
 # (이 값들은 Phase 6 예측 단계나 LLM 후처리 단계에서 채워짐)
@@ -230,6 +277,11 @@ output_cols = [
     '서비스계수', '실제잔여수명', '예측잔여수명', '(월별)고장예상수량', '안전재고', 
     '(월별)필요수량', 'AI예측고장일', '안전버퍼', '권장발주일', '예측실행일자'
 ]
+
+# [Review 반영] reindex 전 컬럼 누락 확인
+missing_cols = [c for c in output_cols if c not in df_final.columns]
+if missing_cols:
+    print(f"⚠️ 경고: 다음 컬럼이 생성되지 않았습니다: {missing_cols}")
 
 df_export = df_final.reindex(columns=output_cols)
 save_path = os.path.join(SAVE_DIR, 'phase4_training_data.csv')
