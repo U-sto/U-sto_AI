@@ -19,7 +19,6 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 print("📂 [Phase 4] AI 학습용 데이터 전처리 시작...")
 
 # 빈 데이터프레임이 로드될 경우를 대비해, 병합 시 KeyError가 나지 않도록 필수 컬럼을 명시
-COLS_RT = ['물품고유번호', '반납일자', '반납확정일자', '사유', '승인상태']
 COLS_DU = ['물품고유번호', '불용일자', '불용확정일자', '사유', '승인상태']
 COLS_DP = ['물품고유번호', '처분방식', '처분확정일자', '물품상태', '승인상태']
 
@@ -38,18 +37,17 @@ def load_csv_safe(filename, required=False, expected_cols=None):
         return pd.DataFrame(columns=expected_cols) if expected_cols else pd.DataFrame()
 
 # 1. 원천 데이터 로드
-df_op = load_csv_safe('04_01_operation_master.csv', required=True) 
-df_rt = load_csv_safe('04_03_return_list.csv', expected_cols=COLS_RT)      
+df_op = load_csv_safe('04_01_operation_master.csv', required=True)    
 df_du = load_csv_safe('05_01_disuse_list.csv', expected_cols=COLS_DU)      
 df_dp = load_csv_safe('06_01_disposal_list.csv', expected_cols=COLS_DP)    
 
 print(f"   - 원천 데이터 로드 완료: 운용 대장 {len(df_op)}건")
 
-# 하나의 물품이 여러 번 반납/불용 이력을 가질 수 있으므로
+# 하나의 물품이 여러 번 불용 이력을 가질 수 있으므로
 # 최신 이력(확정일자 기준 내림차순) 하나만 남기고 중복을 제거해야 1:1 병합이 깔끔하게 됨
 def drop_duplicates_safe(df, date_col, conf_date_col):
     if not df.empty:
-        # 원본 DataFrame이 함수 호출로 인해 예상치 못하게 변경되지 않도록 복사본에서 작업
+# 원본 DataFrame이 함수 호출로 인해 예상치 못하게 변경되지 않도록 복사본에서 작업
         df = df.copy()
         # 기준일자 컬럼을 datetime으로 변환
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
@@ -71,29 +69,24 @@ def drop_duplicates_safe(df, date_col, conf_date_col):
         return df.drop_duplicates(subset=['물품고유번호'], keep='first')
     return df
 
-df_rt = drop_duplicates_safe(df_rt, '반납일자', '반납확정일자')
 df_du = drop_duplicates_safe(df_du, '불용일자', '불용확정일자')
 df_dp = drop_duplicates_safe(df_dp, '처분확정일자', '처분확정일자') # 처분은 일자가 하나뿐이므로 동일하게 처리
 
 # ---------------------------------------------------------
 # 1. 데이터 병합 (Master Table 생성)
 # ---------------------------------------------------------
-print("   1. 생애주기 병합 (운용+반납+불용+처분)...")
+print("   1. 생애주기 병합 (운용+불용+처분)...")
 
 # [Review 반영] 병합 전 컬럼 존재 여부 확인 함수
 def get_existing_cols(df, target_cols):
     return [c for c in target_cols if c in df.columns]
 
-# 운용 마스터에 반납, 불용, 처분 이력을 Left Join으로 붙임
-# (1) 반납 이력 병합
-cols_rt_exist = get_existing_cols(df_rt, ['물품고유번호', '반납일자', '반납확정일자', '사유', '승인상태'])
-df_merged = pd.merge(df_op, df_rt[cols_rt_exist].rename(columns={'승인상태': '반납승인상태', '사유': '반납사유'}), on='물품고유번호', how='left')
-
-# (2) 불용 이력 병합
+# 운용 마스터에 불용, 처분 이력을 Left Join으로 붙임
+# (1) 불용 이력 병합
 cols_du_exist = get_existing_cols(df_du, ['물품고유번호', '불용일자', '불용확정일자', '사유', '승인상태'])
-df_merged = pd.merge(df_merged, df_du[cols_du_exist].rename(columns={'사유': '불용사유', '승인상태': '불용승인상태'}), on='물품고유번호', how='left')
+df_merged = pd.merge(df_op, df_du[cols_du_exist].rename(columns={'사유': '불용사유', '승인상태': '불용승인상태'}), on='물품고유번호', how='left')
 
-# (3) 처분 이력 병합
+# (2) 처분 이력 병합
 cols_dp_exist = get_existing_cols(df_dp, ['물품고유번호', '처분방식', '처분확정일자', '물품상태', '승인상태'])
 df_merged = pd.merge(df_merged, df_dp[cols_dp_exist].rename(columns={'승인상태': '처분승인상태'}), on='물품고유번호', how='left')
 # ---------------------------------------------------------
@@ -101,23 +94,22 @@ df_merged = pd.merge(df_merged, df_dp[cols_dp_exist].rename(columns={'승인상�
 # ---------------------------------------------------------
 print("   2. 결측치 보정 및 기준일 산출...")
 
-date_cols = ['취득일자', '반납일자', '불용일자', '반납확정일자', '불용확정일자', '처분확정일자']
+date_cols = ['취득일자', '불용일자', '불용확정일자', '처분확정일자']
 for col in date_cols:
     if col in df_merged.columns:
         df_merged[col] = pd.to_datetime(df_merged[col], errors='coerce')
 
 # 수명 계산의 끝점이 되는 '종료일'을 구하는 로직
-# 1순위: 처분 > 2순위: 불용 > 3순위: 반납 순으로 우선순위를 둠.
+# 1순위: 처분확정일자 > 2순위: 불용확정일자
 confirmed_end_date = (
     df_merged.get('처분확정일자', pd.Series(index=df_merged.index, dtype='datetime64[ns]'))
     .combine_first(df_merged.get('불용확정일자', pd.Series(index=df_merged.index, dtype='datetime64[ns]')))
-    .combine_first(df_merged.get('반납확정일자', pd.Series(index=df_merged.index, dtype='datetime64[ns]')))
 )
-valid_ret_date = df_merged['반납일자'].where(df_merged['반납승인상태'] == '확정')
-valid_disuse_date = df_merged['불용일자'].where(df_merged['불용승인상태'] == '확정')
-fallback_end_date = valid_ret_date.combine_first(valid_disuse_date)
 
-df_merged['최종종료일'] = confirmed_end_date.combine_first(fallback_end_date)
+# 확정일자가 없을 경우 불용일자를 차선책으로 사용
+valid_disuse_date = df_merged['불용일자'].where(df_merged.get('불용승인상태') == '확정')
+
+df_merged['최종종료일'] = confirmed_end_date.combine_first(valid_disuse_date)
 # 종료일이 없으면 '현재 운용 중'이라는 뜻이므로 기준일을 today로 설정
 df_merged['기준일'] = df_merged['최종종료일'].fillna(today)
 
@@ -128,9 +120,7 @@ df_final['취득금액'] = df_merged.get('취득금액', 0)
 df_final['운용부서코드'] = df_merged.get('운용부서코드')
 df_final['캠퍼스'] = df_merged.get('캠퍼스')
 df_final['취득일자'] = df_merged.get('취득일자')
-df_final['반납일자'] = df_merged.get('반납일자')
 df_final['불용일자'] = df_merged.get('불용일자')
-df_final['반납사유'] = df_merged.get('반납사유')
 df_final['불용사유'] = df_merged.get('불용사유')
 df_final['물품상태'] = df_merged.get('물품상태')
 df_final['처분방식'] = df_merged.get('처분방식')
@@ -161,12 +151,11 @@ df_final['운용연차'] = ((df_final['기준일'] - df_final['취득일자']).d
 # 학습에 사용할 "수명이다 한(Dead)" 데이터를 정의하는 로직 (정답지 확보)
 is_disposal = df_final['처분방식'].isin(['폐기', '멸실'])
 is_sale_eol = (df_final['처분방식'] == '매각') & df_final['불용사유'].isin(['고장/파손', '노후화(성능저하)', '수리비용과다', '구형화', '내구연한 경과(노후화)'])
-is_return_repair = df_final['반납일자'].notna() & (df_final['물품상태'] == '정비필요품')
-df_final['학습데이터여부'] = np.where(is_disposal | is_sale_eol | is_return_repair, 'Y', 'N')
+
+df_final['학습데이터여부'] = np.where(is_disposal | is_sale_eol, 'Y', 'N')
 
 # --- IQR 기반 이상치(Outlier) 제거 ---
 # 이유: 학습 데이터에 수명이 0.1년이거나 50년인 극단적 데이터가 섞여 있으면 모델이 흔들림.
-# [Review 반영] IQR 기반 이상치 제거 전 유효 데이터 체크
 train_cond = df_final['학습데이터여부'] == 'Y'
 if train_cond.sum() > 0 and df_final.loc[train_cond, '운용연차'].notna().any():
     Q1 = df_final.loc[train_cond, '운용연차'].quantile(0.25)
@@ -263,7 +252,7 @@ df_final.loc[df_train_source.iloc[n_train + n_valid:].index,  '데이터세트�
 output_cols = [
     # 정적 & 기본 정보
     '물품고유번호', 'G2B목록명', '물품분류명', '운용부서코드', '운용부서명', '캠퍼스',
-    '취득일자', '반납일자', '불용일자', '처분방식', '물품상태', '불용사유', '반납사유', 
+    '취득일자', '불용일자', '처분방식', '물품상태', '불용사유', 
     
     # 파생 변수 (Features)
     '내용연수', '취득금액', '운용연차', '잔여내용연수', '부서가혹도', '누적사용부하',

@@ -361,8 +361,10 @@ def step_determine_event(ctx):
         latest_possible = acq_date + timedelta(days=int(limit_real * 0.8))
         
         if earliest_possible < latest_possible and earliest_possible <= TODAY:
-            # 해당 범위 내에서 랜덤하게 날짜 결정 (기존 10~180일 간격 로직 반영)
-            days_to_add = random.randint(10, 180)
+            # [Copilot 리뷰 반영] 발생 가능 종료일을 넘지 않도록 랜덤 범위 제한
+            max_days_allowed = (latest_possible - earliest_possible).days
+            # 최소 10일에서 최대 180일 사이로 하되, 가용 기간(max_days_allowed)을 넘지 않도록 설정
+            days_to_add = random.randint(10, max(10, min(180, max_days_allowed)))
             transfer_date = earliest_possible + timedelta(days=days_to_add)
             
             if sim_date <= transfer_date <= min(latest_possible, TODAY):
