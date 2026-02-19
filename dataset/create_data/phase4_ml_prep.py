@@ -128,7 +128,25 @@ IQR = Q3 - Q1
 lower_bound = Q1 - 1.5 * IQR
 upper_bound = Q3 + 1.5 * IQR
 
-# 예측해야 할 데이터('N')는 살리고, 학습 데이터('Y') 중에서 정상 범주에 있는 것만 남김
+# 1. 이상치로 판별된 데이터만 따로 뽑아보기
+outlier_mask = (df_final['학습데이터여부'] == 'Y') & ((df_final['운용연차'] < lower_bound) | (df_final['운용연차'] > upper_bound))
+df_outliers = df_final[outlier_mask]
+
+# 2. 이상치 데이터 통계 출력 (네가 원했던 부분!)
+if not df_outliers.empty:
+    outlier_min = df_outliers['운용연차'].min()
+    outlier_max = df_outliers['운용연차'].max()
+    outlier_mode = df_outliers['운용연차'].mode()[0] if not df_outliers['운용연차'].mode().empty else '없음'
+    
+    print(f"      * [이상치 상세 분석] 제외 예정인 데이터 {len(df_outliers)}건의 수명 정보:")
+    print(f"        - 정상 허용 범위: {lower_bound:.2f}년 ~ {upper_bound:.2f}년")
+    print(f"        - 통계 ➔ 최소값: {outlier_min}년 / 최대값: {outlier_max}년 / 최빈값: {outlier_mode}년")
+    
+    # 어떤 물품들이 주로 걸렸는지 상위 5개 품목명 확인
+    top_items = df_outliers['G2B목록명'].value_counts().head(3).to_dict()
+    print(f"        - 주로 걸러진 품목 Top 3: {top_items}")
+
+# 3. 예측해야 할 데이터('N')는 살리고, 학습 데이터('Y') 중에서 정상 범주에 있는 것만 남김
 valid_data_mask = (df_final['학습데이터여부'] == 'N') | ((df_final['학습데이터여부'] == 'Y') & (df_final['운용연차'] >= lower_bound) & (df_final['운용연차'] <= upper_bound))
 removed_count = len(df_final) - valid_data_mask.sum()
 df_final = df_final[valid_data_mask].copy()
