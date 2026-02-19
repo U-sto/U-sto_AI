@@ -172,8 +172,8 @@ if train_cond.sum() > 0 and df_final.loc[train_cond, '운용연차'].notna().any
     Q1 = df_final.loc[train_cond, '운용연차'].quantile(0.25)
     Q3 = df_final.loc[train_cond, '운용연차'].quantile(0.75)
     IQR = Q3 - Q1
-    lower_bound = Q1 - 1.5 * IQR
-    upper_bound = Q3 + 1.5 * IQR
+    lower_bound = Q1 - 2.0* IQR
+    upper_bound = Q3 + 2.0 * IQR
 
     # 이상치 제외 및 결과 출력
     outlier_mask = (df_final['학습데이터여부'] == 'Y') & ((df_final['운용연차'] < lower_bound) | (df_final['운용연차'] > upper_bound))
