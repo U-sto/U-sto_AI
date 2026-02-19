@@ -346,9 +346,11 @@ def step_determine_event(ctx):
     # 1. [불용 예정일] 물리적 수명 도달 시점 계산
     # -----------------------------------------------------------
     eol_date = acq_date + timedelta(days=limit_real)
-    # 오늘보다 이전이면 발생 가능 후보에 추가
-    if sim_date <= eol_date <= TODAY:
-        candidates.append(('불용신청', eol_date))
+    # EOL이 오늘(TODAY) 이전/당일이면 발생 가능 후보에 추가하되,
+    # 실제 발생일은 시뮬레이션 커서(sim_date)보다 과거로 가지 않도록 보정
+    if eol_date <= TODAY:
+        eol_event_date = max(sim_date, eol_date)
+        candidates.append(('불용신청', eol_event_date))
 
     # -----------------------------------------------------------
     # 2. [직접전환 예정일] 운용 중 부서 이동 (Look-ahead)

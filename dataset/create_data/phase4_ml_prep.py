@@ -54,18 +54,10 @@ def drop_duplicates_safe(df, date_col, conf_date_col):
         if conf_date_col in df.columns:
             # 확정일자 컬럼이 존재하면 이를 기준으로도 정렬
             df[conf_date_col] = pd.to_datetime(df[conf_date_col], errors='coerce')
-            df = df.sort_values(
-                by=['물품고유번호', conf_date_col, date_col],
-                ascending=[True, False, False],
-                kind='mergesort'
-            )
+            df = df.sort_values(by=['물품고유번호', conf_date_col, date_col], ascending=[True, False, False], kind='mergesort')
         else:
             # 확정일자가 없더라도 최소한 물품고유번호+기준일자 기준으로 최신 이력을 선택
-            df = df.sort_values(
-                by=['물품고유번호', date_col],
-                ascending=[True, False],
-                kind='mergesort'
-            )
+            df = df.sort_values(by=['물품고유번호', date_col], ascending=[True, False], kind='mergesort')
         return df.drop_duplicates(subset=['물품고유번호'], keep='first')
     return df
 
@@ -113,6 +105,10 @@ df_merged['최종종료일'] = confirmed_end_date.combine_first(valid_disuse_dat
 # 종료일이 없으면 '현재 운용 중'이라는 뜻이므로 기준일을 today로 설정
 df_merged['기준일'] = df_merged['최종종료일'].fillna(today)
 
+# 머신러닝용 DF 구성 (확정 상태 체크를 위해 관련 컬럼 일시 포함)
+df_final = df_merged.copy()
+df_final['기준일'] = df_merged['기준일']
+
 # 안전한 컬럼 매핑 로직
 df_final = pd.DataFrame(index=df_merged.index)
 df_final['물품고유번호'] = df_merged['물품고유번호']
@@ -124,8 +120,7 @@ df_final['불용일자'] = df_merged.get('불용일자')
 df_final['불용사유'] = df_merged.get('불용사유')
 df_final['물품상태'] = df_merged.get('물품상태')
 df_final['처분방식'] = df_merged.get('처분방식')
-df_final['기준일'] = df_merged['기준일']
-
+df_final['기준일'] = df_merged.get('기준일')
 # Fallback을 포함한 명칭 매핑
 df_final['G2B목록명'] = df_merged['G2B_목록명'] if 'G2B_목록명' in df_merged.columns else df_merged.get('G2B목록명', pd.NA)
 df_final['물품분류명'] = df_merged['물품분류명'] if '물품분류명' in df_merged.columns else df_final['G2B목록명']
@@ -148,10 +143,25 @@ print("   3. 파생변수 생성 및 이상치 처리...")
 # 운용연차 산출 (년 단위 환산)
 df_final['운용연차'] = ((df_final['기준일'] - df_final['취득일자']).dt.days.clip(lower=0) / 365.0).round(2)
 
-# 학습에 사용할 "수명이다 한(Dead)" 데이터를 정의하는 로직 (정답지 확보)
-is_disposal = df_final['처분방식'].isin(['폐기', '멸실'])
-is_sale_eol = (df_final['처분방식'] == '매각') & df_final['불용사유'].isin(['고장/파손', '노후화(성능저하)', '수리비용과다', '구형화', '내구연한 경과(노후화)'])
+# 안전하게 시리즈를 가져오는 헬퍼 함수
+def safe_get_series(df, col_name, fill_val=np.nan):
+    if col_name in df.columns:
+        return df[col_name]
+    # 날짜 데이터 형식인 경우 datetime64 시리즈 반환, 아닌 경우 일반 시리즈 반환
+    if '일자' in col_name:
+        return pd.Series(pd.NaT, index=df.index)
+    return pd.Series(fill_val, index=df.index)
 
+# [FIX] 에러가 났던 지점: safe_get_series를 사용하여 None 에러 방지
+disposal_confirmed = (safe_get_series(df_final, '처분승인상태', '') == '확정') | (safe_get_series(df_final, '처분확정일자').notna())
+disuse_confirmed = (safe_get_series(df_final, '불용승인상태', '') == '확정') | (safe_get_series(df_final, '불용확정일자').notna())
+# 처분방식/불용사유 + 확정 여부를 함께 고려
+is_disposal = disposal_confirmed & df_final['처분방식'].isin(['폐기', '멸실'])
+is_sale_eol = (
+    disuse_confirmed 
+    & (df_final['처분방식'] == '매각') 
+    & df_final['불용사유'].isin(['고장/파손', '노후화(성능저하)', '수리비용과다', '구형화', '내구연한 경과(노후화)'])
+)
 df_final['학습데이터여부'] = np.where(is_disposal | is_sale_eol, 'Y', 'N')
 
 # --- IQR 기반 이상치(Outlier) 제거 ---
