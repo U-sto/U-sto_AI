@@ -355,13 +355,8 @@ df_final.loc[df_final['학습데이터여부'] == 'Y', '실제잔여수명'] = 0
 print("   4. 이상치 제거 수행...")
 before_cnt = len(df_final)
 
-# 1) 논리적 이상치: 운용연차가 음수인 경우
+#  논리적 이상치: 운용연차가 음수인 경우
 df_final = df_final[df_final['운용연차'] >= 0]
-
-# 2) 통계적 이상치: 취득금액 상위 0.1% 제거 (왜곡 방지)
-if not df_final.empty:
-    q999 = df_final['취득금액'].quantile(0.999)
-    df_final = df_final[df_final['취득금액'] <= q999]
 
 print(f"    - 이상치 제거: {before_cnt - len(df_final)}건 제거됨")
 

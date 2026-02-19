@@ -123,7 +123,7 @@ MAX_REUSE_CYCLES = 3     # 최대 재사용 횟수 제한
 # ---------------------------------------------------------
 # 결과 저장을 위한 전역 리스트
 results = {
-    'req': [],      # 운용신청
+    'transfer': [], # 운용전환
     'return': [],   # 반납
     'disuse': [],   # 불용
     'disposal': [], # 처분
@@ -191,13 +191,13 @@ def get_approval_status_and_date(base_date, prob_dist=None, event_type=None, is_
     :param base_date: 기준일자
     :param prob_dist: 승인 상태 선택에 사용할 확률 분포 (STATUS_CHOICES 순서의 리스트 또는 배열)
     :param event_type: 'op_req', 'return', 'disuse', 'disposal' 등 이벤트 종류
-    :param is_op_req: 운용 신청 여부(True인 경우 운용 신청 전용 승인 로직 사용)
+    :param is_op_req: 운용 전환신청 여부(True인 경우 운용 전환 신청 전용 승인 로직 사용)
     :return: (status, confirm_date, req_date) 튜플. status는 승인 상태 문자열,
             confirm_date는 실제 승인/처리일자, req_date는 신청/요청일자(대기 상태일 경우 확인일자)
     """
     # 상태 결정
     if is_op_req:
-        # 운용 신청의 경우 날짜에 따라 확률 다름
+        # 운용 전환신청의 경우 날짜에 따라 확률 다름
         days_diff = (TODAY - base_date).days
         if days_diff <= 14:
             status = np.random.choice(['확정', '대기', '반려'], p=[0.5, 0.4, 0.1])
@@ -288,8 +288,8 @@ def step_operation_transfer(ctx, is_direct=False):
     else:
         display_status = fail_fallback_status
 
-    results['req'].append({
-        '운용신청일자': req_date_fixed.strftime('%Y-%m-%d'),
+    results['transfer'].append({
+        '운용전환일자': req_date_fixed.strftime('%Y-%m-%d'),
         '등록일자': req_date_fixed.strftime('%Y-%m-%d'),
         '운용확정일자': confirm_date.strftime('%Y-%m-%d') if status == '확정' else '',
         '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
@@ -298,7 +298,8 @@ def step_operation_transfer(ctx, is_direct=False):
         '물품고유번호': asset_id, 
         '취득일자': row.취득일자, '취득금액': row.취득금액,
         '운용부서': ctx['curr_dept_name'], 
-        '사용자': transfer_remark, # 전환 신청 내용을 '사용자' 필드에 기입
+        '물품상태': ctx.get('curr_condition'),
+        '사유': transfer_remark, # 전환 신청 내용 기록
         '신청구분': req_type,
         '운용상태': display_status
     })
@@ -795,10 +796,10 @@ for row in df_operation.itertuples():
 print("💾 [Phase 2] 결과 저장 중...")
 
 # 각 CSV별 컬럼 정의 (빈 결과가 나와도 헤더를 유지하기 위함)
-COLS_REQ = [
-    '운용신청일자', '등록일자', '운용확정일자', '등록자ID', '등록자명', '승인상태',
-    'G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '운용부서', 
-    '사용자', '신청구분', '운용상태'
+COLS_TRANSFER = [
+    '운용전환일자', '등록일자', '운용확정일자', '등록자ID', '등록자명', '승인상태',
+    'G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '운용부서',
+    '신청구분', '운용상태', '물품상태', '사유'
 ]
 COLS_RETURN = [
     '반납일자', '반납확정일자', '등록자ID', '등록자명', '승인상태', 'G2B_목록번호', 
@@ -821,7 +822,7 @@ COLS_HISTORY = [
 ]
 
 # 데이터프레임 생성 시 columns 명시
-df_op_req = pd.DataFrame(results['req'], columns=COLS_REQ)
+df_op_req = pd.DataFrame(results['transfer'], columns=COLS_TRANSFER)
 df_return = pd.DataFrame(results['return'], columns=COLS_RETURN)
 df_disuse = pd.DataFrame(results['disuse'], columns=COLS_DISUSE)
 df_disposal = pd.DataFrame(results['disposal'], columns=COLS_DISPOSAL)
@@ -849,7 +850,7 @@ if '운용확정일자' not in df_operation.columns:
 
 df_operation[cols_operation].to_csv(os.path.join(DATA_DIR, '04_01_operation_master.csv'), index=False, encoding='utf-8-sig')
 
-df_op_req.to_csv(os.path.join(DATA_DIR, '04_02_operation_req_list.csv'), index=False, encoding='utf-8-sig')
+df_op_req.to_csv(os.path.join(DATA_DIR, '04_02_operation_transfer_list.csv'), index=False, encoding='utf-8-sig')
 df_return.to_csv(os.path.join(DATA_DIR, '04_03_return_list.csv'), index=False, encoding='utf-8-sig')
 df_disuse.to_csv(os.path.join(DATA_DIR, '05_01_disuse_list.csv'), index=False, encoding='utf-8-sig')
 df_disposal.to_csv(os.path.join(DATA_DIR, '06_01_disposal_list.csv'), index=False, encoding='utf-8-sig')
