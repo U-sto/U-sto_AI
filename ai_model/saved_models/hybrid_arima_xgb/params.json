@@ -1,8 +1,8 @@
 {
     "model": "Hybrid_ARIMA_XGB",
-    "best_rmse": 0.0,
-    "best_mape": 0.0,
-    "improvement_vs_arima": -13723839.43,
+    "best_rmse": 1069.9189,
+    "best_mape": 0.2671,
+    "improvement_vs_arima": 17.96,
     "features_used": [
         "lag_1",
         "lag_7",
