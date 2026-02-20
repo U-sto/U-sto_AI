@@ -1,0 +1,12 @@
+{
+    "model": "Hybrid_ARIMA_XGB",
+    "best_rmse": 0.0,
+    "best_mape": 0.0,
+    "improvement_vs_arima": -13723839.43,
+    "features_used": [
+        "lag_1",
+        "lag_7",
+        "rolling_mean_3",
+        "rolling_std_7"
+    ]
+}
