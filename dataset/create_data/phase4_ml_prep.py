@@ -253,12 +253,28 @@ for col in ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스'
 # ---------------------------------------------------------
 df_train_source = df_final[df_final['학습데이터여부'] == 'Y'].copy()
 
-# 시계열 정렬을 풀고 '랜덤 셔플'로 학습/검증/테스트 세트를 섞어줍니다.
-# 1차 분할: Train+Valid(80%) / Test(20%)
-train_valid, test = train_test_split(df_train_source, test_size=0.2, random_state=42)
-# 2차 분할: Train(60%) / Valid(20%) 
-train, valid = train_test_split(train_valid, test_size=0.25, random_state=42) # 0.8 * 0.25 = 0.2
+# [리뷰 반영] 클래스 1개짜리 희소 데이터가 있으면 stratify 에러가 나므로, 
+# 최소 2개 이상인 클래스만 찾아서 층화 추출의 기준으로 삼거나 예외 처리를 해줍니다.
+class_counts = df_train_source['물품분류명'].value_counts()
+valid_classes = class_counts[class_counts > 1].index
+df_train_source['층화기준'] = df_train_source['물품분류명'].apply(lambda x: x if x in valid_classes else '기타')
 
+#  1차 분할: Train+Valid (90%) / Test (10%)
+# stratify를 적용해 특정 물품이 한쪽 세트에 몰리는 것을 방지!
+train_valid, test = train_test_split(
+    df_train_source, 
+    test_size=0.1, 
+    random_state=42,
+    stratify=df_train_source['층화기준']
+)
+
+# 2차 분할: Train (70%) / Valid (20%) -> 20/90 = 약 0.2222
+train, valid = train_test_split(
+    train_valid, 
+    test_size=0.2222, 
+    random_state=42,
+    stratify=train_valid['층화기준']
+)
 # 데이터세트 구분 컬럼에 결과 매핑
 df_final['데이터세트구분'] = 'Prediction' # 기본값은 예측 대상 (학습데이터여부 == 'N')
 df_final.loc[train.index, '데이터세트구분'] = 'Train'

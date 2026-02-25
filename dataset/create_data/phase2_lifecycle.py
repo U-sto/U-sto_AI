@@ -632,11 +632,10 @@ print("⏳ [Phase 2] 자산 생애주기 시뮬레이션 시작 (운용 Loop)...
 for row in df_operation.itertuples():
     # Context 객체: 함수 간 상태 공유용
     clear_date = pd.to_datetime(row.정리일자) if pd.notna(row.정리일자) else pd.to_datetime(row.취득일자)
-    
     # ---------------------------------------------------------
     # [NEW] 1. 물품별 현실적 기대 수명(Natural Life Limit) 계산
-    # 우선 기본값 설정
-    mu, sigma = REAL_LIFETIME_STATS["default"]
+    # 우선 기본값 설정 (에러 방지를 위해 get 메서드 사용)
+    mu, sigma = REAL_LIFETIME_STATS.get("default", (5.0, 1.5))
     
     # 목록명이나 분류명에서 키워드 검색하여 통계 적용
     # 대소문자 무시 및 긴 키워드 우선 매칭 적용
@@ -654,10 +653,33 @@ for row in df_operation.itertuples():
             mu, sigma = REAL_LIFETIME_STATS[key]
             break
             
-    # [NEW] 2. 정규분포(Normal Distribution)에서 샘플링
-    # - mu(평균)와 sigma(표준편차)를 이용해 랜덤 수명 생성
-    # - 최소 1년(365일)은 사용한다고 가정 (음수 방지)
-    assigned_life_years = max(1.0, np.random.normal(mu, sigma))
+    # [NEW] 2. 정규분포(Normal Distribution)에서 샘플링 및 AI용 패턴 부여
+    # - mu(평균)와 sigma(표준편차)를 이용해 기본 랜덤 수명 생성
+    base_life_years = max(1.0, np.random.normal(mu, sigma))
+    
+    # ---------------------------------------------------------
+    # [NEW] 3. 데이터 패턴 부여: AI 모델 학습을 위한 가중치 적용 
+    # ---------------------------------------------------------
+    # 1) 부서가혹도에 따른 수명 단축 (험한 곳은 빨리 고장남)
+    dept_name = str(row.운용부서)
+    severity_factor = 1.0
+    if any(k in dept_name for k in ['소프트웨어', '공학', '전산', 'AI', '정보', '공과', '컴퓨터']):
+        severity_factor = 1.3
+    elif any(k in dept_name for k in ['연구', '실험', '과학']):
+        severity_factor = 1.2
+        
+    # 2) 취득금액(리드타임등급)에 따른 수명 연장 (비싼 고가 장비는 내구성이 좋음)
+    price = float(row.취득금액) if pd.notna(row.취득금액) else 0.0
+    if price >= 30000000:    # 3천만 원 이상 고가 장비
+        price_factor = 1.15  # 수명 15% 연장
+    elif price >= 5000000:   # 5백만 원 이상 중가 장비
+        price_factor = 1.05  # 수명 5% 연장
+    else:
+        price_factor = 1.0   # 일반 장비
+        
+    # 최종 수명 확정 = 기본수명 * (1 / 가혹도) * 가격보정
+    assigned_life_years = base_life_years * (1.0 / severity_factor) * price_factor
+    assigned_life_years = max(0.5, assigned_life_years) # 최소 0.5년(반년) 방어선 구축
     
     # 일(Day) 단위로 변환
     assigned_limit_days = int(assigned_life_years * 365)
