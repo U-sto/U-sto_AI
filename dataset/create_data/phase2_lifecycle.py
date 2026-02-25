@@ -634,7 +634,7 @@ for row in df_operation.itertuples():
     clear_date = pd.to_datetime(row.정리일자) if pd.notna(row.정리일자) else pd.to_datetime(row.취득일자)
     # ---------------------------------------------------------
     # [NEW] 1. 물품별 현실적 기대 수명(Natural Life Limit) 계산
-    # 우선 기본값 설정 (에러 방지를 위해 get 메서드 사용)
+    # 우선 기본값 설정 ("default" 키는 설정에 반드시 존재해야 함)
     mu, sigma = REAL_LIFETIME_STATS.get("default", (5.0, 1.5))
     
     # 목록명이나 분류명에서 키워드 검색하여 통계 적용
@@ -660,26 +660,43 @@ for row in df_operation.itertuples():
     # ---------------------------------------------------------
     # [NEW] 3. 데이터 패턴 부여: AI 모델 학습을 위한 가중치 적용 
     # ---------------------------------------------------------
+    
     # 1) 부서가혹도에 따른 수명 단축 (험한 곳은 빨리 고장남)
+    # [Copilot 반영] 우선순위 명시: 가혹도가 높은 '소프트웨어/공학(1.3)'을 먼저 검사하여 적용합니다.
     dept_name = str(row.운용부서)
-    severity_factor = 1.0
+    severity_divisor = 1.0 # [Copilot 반영] 나누는 값이라는 것을 명확히 하기 위해 변수명 변경 (factor -> divisor)
+    
     if any(k in dept_name for k in ['소프트웨어', '공학', '전산', 'AI', '정보', '공과', '컴퓨터']):
-        severity_factor = 1.3
+        severity_divisor = 1.3
     elif any(k in dept_name for k in ['연구', '실험', '과학']):
-        severity_factor = 1.2
+        severity_divisor = 1.2
         
     # 2) 취득금액(리드타임등급)에 따른 수명 연장 (비싼 고가 장비는 내구성이 좋음)
+    # [Copilot 반영] 품목군에 따라 고가/중가 장비의 기준 금액을 다르게 적용
     price = float(row.취득금액) if pd.notna(row.취득금액) else 0.0
-    if price >= 30000000:    # 3천만 원 이상 고가 장비
+    
+    # 기본 임계값 (IT 기기, 장비류 기준)
+    high_tier = 30000000 # 3천만 원
+    mid_tier = 5000000   # 5백만 원
+    
+    # 가구류 등은 기준을 대폭 낮춤
+    if any(k in target_name_norm for k in ['책상', '의자', '캐비닛', '가구', '랙', '실습대']):
+        high_tier = 1000000  # 가구는 100만 원 이상이면 고급
+        mid_tier = 300000    # 가구는 30만 원 이상이면 중급
+        
+    if price >= high_tier:
         price_factor = 1.15  # 수명 15% 연장
-    elif price >= 5000000:   # 5백만 원 이상 중가 장비
+    elif price >= mid_tier:
         price_factor = 1.05  # 수명 5% 연장
     else:
         price_factor = 1.0   # 일반 장비
         
     # 최종 수명 확정 = 기본수명 * (1 / 가혹도) * 가격보정
-    assigned_life_years = base_life_years * (1.0 / severity_factor) * price_factor
-    assigned_life_years = max(0.5, assigned_life_years) # 최소 0.5년(반년) 방어선 구축
+    # [Copilot 반영] severity_factor 대신 severity_divisor 사용
+    assigned_life_years = base_life_years * (1.0 / severity_divisor) * price_factor
+    
+    # [Copilot 반영] 최소 수명 방어선을 0.5년에서 현실적인 1.0년(1년)으로 상향
+    assigned_life_years = max(1.0, assigned_life_years) 
     
     # 일(Day) 단위로 변환
     assigned_limit_days = int(assigned_life_years * 365)

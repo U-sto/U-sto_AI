@@ -253,33 +253,32 @@ for col in ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스'
 # ---------------------------------------------------------
 df_train_source = df_final[df_final['학습데이터여부'] == 'Y'].copy()
 
-# [리뷰 반영] 클래스 1개짜리 희소 데이터가 있으면 stratify 에러가 나므로, 
-# 최소 2개 이상인 클래스만 찾아서 층화 추출의 기준으로 삼거나 예외 처리를 해줍니다.
-class_counts = df_train_source['물품분류명'].value_counts()
-valid_classes = class_counts[class_counts > 1].index
-df_train_source['층화기준'] = df_train_source['물품분류명'].apply(lambda x: x if x in valid_classes else '기타')
+# [Copilot 반영] 시간 기반 분할: Train(70%) / Valid(20%) / Test(10%)
+# - 랜덤 분할 대신 '취득일자'를 기준으로 시계열 블록 분할을 수행
+# - 실제 운영에서는 과거 데이터로 미래를 예측하므로, 테스트 세트는 항상 가장 최근 데이터가 되도록 구성
+date_col = '취득일자'
+df_time_split = df_train_source.copy()
 
-#  1차 분할: Train+Valid (90%) / Test (10%)
-# stratify를 적용해 특정 물품이 한쪽 세트에 몰리는 것을 방지!
-train_valid, test = train_test_split(
-    df_train_source, 
-    test_size=0.1, 
-    random_state=42,
-    stratify=df_train_source['층화기준']
-)
+# 확실한 시계열 계산을 위해 datetime 타입으로 변환
+df_time_split[date_col] = pd.to_datetime(df_time_split[date_col])
 
-# 2차 분할: Train (70%) / Valid (20%) -> 20/90 = 약 0.2222
-train, valid = train_test_split(
-    train_valid, 
-    test_size=0.2222, 
-    random_state=42,
-    stratify=train_valid['층화기준']
-)
+# 70%, 90% 분위수 기준으로 시점 경계 설정 (≈ Train 70% / Valid 20% / Test 10%)
+quantiles = df_time_split[date_col].quantile([0.7, 0.9])
+train_cutoff = quantiles.loc[0.7]
+test_cutoff = quantiles.loc[0.9]
+
+train_idx = df_time_split[df_time_split[date_col] < train_cutoff].index
+valid_idx = df_time_split[
+    (df_time_split[date_col] >= train_cutoff) & (df_time_split[date_col] < test_cutoff)
+].index
+test_idx = df_time_split[df_time_split[date_col] >= test_cutoff].index
+
 # 데이터세트 구분 컬럼에 결과 매핑
-df_final['데이터세트구분'] = 'Prediction' # 기본값은 예측 대상 (학습데이터여부 == 'N')
-df_final.loc[train.index, '데이터세트구분'] = 'Train'
-df_final.loc[valid.index, '데이터세트구분'] = 'Valid'
-df_final.loc[test.index, '데이터세트구분'] = 'Test'
+df_final['데이터세트구분'] = 'Prediction'  # 기본값은 예측 대상 (학습데이터여부 == 'N')
+df_final.loc[train_idx, '데이터세트구분'] = 'Train'
+df_final.loc[valid_idx, '데이터세트구분'] = 'Valid'
+df_final.loc[test_idx, '데이터세트구분'] = 'Test'
+
 # 최종 출력 컬럼 지정 (컬럼정의서 매핑 반영 & 데이터 누수 방지)
 output_cols = [
     # 정적 & 기본 정보
