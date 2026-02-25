@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import os
 from pandas.errors import EmptyDataError
-from sklearn.model_selection import train_test_split
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
@@ -253,8 +252,8 @@ for col in ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스'
 # ---------------------------------------------------------
 df_train_source = df_final[df_final['학습데이터여부'] == 'Y'].copy()
 
-# [Copilot 반영] 시간 기반 분할: Train(70%) / Valid(20%) / Test(10%)
-# - 랜덤 분할 대신 '취득일자'를 기준으로 시계열 블록 분할을 수행
+# 시간 기반 분할: Train(70%) / Valid(20%) / Test(10%)
+# - '취득일자'를 기준으로 시계열 블록 분할을 수행
 # - 실제 운영에서는 과거 데이터로 미래를 예측하므로, 테스트 세트는 항상 가장 최근 데이터가 되도록 구성
 date_col = '취득일자'
 df_time_split = df_train_source.copy()
