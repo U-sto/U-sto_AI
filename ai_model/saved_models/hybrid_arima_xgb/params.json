@@ -1,14 +1,22 @@
 {
+    "run_id": "20260225_191421",
     "model": "Hybrid_ARIMA_XGB",
     "eval_split": "test_last_20_percent",
-    "baseline_arima_rmse": 1304.193561,
-    "best_rmse": 1069.918921,
-    "best_mape": 0.267083,
-    "rmse_improvement_vs_arima_pct": 17.9632,
+    "eval_window": "2022-06-12 to 2026-02-15",
+    "baseline_arima_rmse": 1072.124305,
+    "best_rmse": 820.296913,
+    "best_mape": 0.246189,
+    "rmse_improvement_vs_arima_pct": 23.4886,
     "features_used": [
         "lag_1",
         "lag_7",
         "rolling_mean_3",
-        "rolling_std_7"
+        "rolling_std_7",
+        "Item_Count_lag_1",
+        "Item_Count_lag_7",
+        "Avg_Price_lag_1",
+        "Avg_Price_lag_7",
+        "Avg_Expected_Life_lag_1",
+        "Avg_Expected_Life_lag_7"
     ]
 }
