@@ -655,7 +655,7 @@ for row in df_operation.itertuples():
             
     # [NEW] 2. 정규분포(Normal Distribution)에서 샘플링 및 AI용 패턴 부여
     # - mu(평균)와 sigma(표준편차)를 이용해 기본 랜덤 수명 생성
-    base_life_years = max(1.0, np.random.normal(mu, sigma))
+    base_life_years = max(1.0, np.random.normal(mu, sigma * 0.8))
     
     # ---------------------------------------------------------
     # [NEW] 3. 데이터 패턴 부여: AI 모델 학습을 위한 가중치 적용 
