@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import os
 from pandas.errors import EmptyDataError
-
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
@@ -251,17 +250,33 @@ for col in ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스'
 # ---------------------------------------------------------
 # 5. 데이터 분할 및 저장 (Train / Valid / Test / Pred)
 # ---------------------------------------------------------
-df_train_source = df_final[df_final['학습데이터여부'] == 'Y'].copy().sort_values(by='취득일자')
+df_train_source = df_final[df_final['학습데이터여부'] == 'Y'].copy()
 
-# 시계열성이 있는 자산 데이터이므로 랜덤 셔플링보다는 취득일자 순으로 잘라서 
-# 과거 데이터로 미래를 예측하는 Time-Series Split 방식을 흉내내는 것이 좋음
-n_total = len(df_train_source)
-n_train, n_valid = int(n_total * 0.7), int(n_total * 0.2)
+# 시간 기반 분할: Train(70%) / Valid(20%) / Test(10%)
+# - '취득일자'를 기준으로 시계열 블록 분할을 수행
+# - 실제 운영에서는 과거 데이터로 미래를 예측하므로, 테스트 세트는 항상 가장 최근 데이터가 되도록 구성
+date_col = '취득일자'
+df_time_split = df_train_source.copy()
 
-df_final['데이터세트구분'] = 'Prediction' # 기본값은 예측 대상
-df_final.loc[df_train_source.iloc[:n_train].index, '데이터세트구분'] = 'Train'
-df_final.loc[df_train_source.iloc[n_train : n_train + n_valid].index, '데이터세트구분'] = 'Valid'
-df_final.loc[df_train_source.iloc[n_train + n_valid:].index,  '데이터세트구분'] = 'Test'
+# 확실한 시계열 계산을 위해 datetime 타입으로 변환
+df_time_split[date_col] = pd.to_datetime(df_time_split[date_col])
+
+# 70%, 90% 분위수 기준으로 시점 경계 설정 (≈ Train 70% / Valid 20% / Test 10%)
+quantiles = df_time_split[date_col].quantile([0.7, 0.9])
+train_cutoff = quantiles.loc[0.7]
+test_cutoff = quantiles.loc[0.9]
+
+train_idx = df_time_split[df_time_split[date_col] < train_cutoff].index
+valid_idx = df_time_split[
+    (df_time_split[date_col] >= train_cutoff) & (df_time_split[date_col] < test_cutoff)
+].index
+test_idx = df_time_split[df_time_split[date_col] >= test_cutoff].index
+
+# 데이터세트 구분 컬럼에 결과 매핑
+df_final['데이터세트구분'] = 'Prediction'  # 기본값은 예측 대상 (학습데이터여부 == 'N')
+df_final.loc[train_idx, '데이터세트구분'] = 'Train'
+df_final.loc[valid_idx, '데이터세트구분'] = 'Valid'
+df_final.loc[test_idx, '데이터세트구분'] = 'Test'
 
 # 최종 출력 컬럼 지정 (컬럼정의서 매핑 반영 & 데이터 누수 방지)
 output_cols = [
