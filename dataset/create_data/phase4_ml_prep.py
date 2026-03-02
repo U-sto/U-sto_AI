@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import os
 from pandas.errors import EmptyDataError
-
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
@@ -243,25 +242,61 @@ df_final['안전버퍼'] = 0.0
 df_final['권장발주일'] = pd.NaT
 df_final['예측실행일자'] = today.strftime('%Y-%m-%d')
 
-# 범주형 수치화 (모델이 이해할 수 있도록 라벨 인코딩)
-for col in ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스']:
-    df_final[col] = df_final[col].fillna('Unknown').astype(str)
-    df_final[f'{col}_Code'] = pd.factorize(df_final[col], sort=True)[0]
+# ---------------------------------------------------------
+# 💡 [Upgrade] Target Encoding 적용 (기존 pd.factorize 대체)
+# ---------------------------------------------------------
+# 1. 학습 데이터 마스크 생성 및 전체 평균(Global Mean) 계산
+# (학습 데이터에 없는 새로운 카테고리가 나타날 경우를 대비해 전체 평균 수명을 계산해둠)
+train_mask = df_final['학습데이터여부'] == 'Y'
+global_mean_life = df_final.loc[train_mask, '실제수명'].mean()
 
+# 2. 범주형 변수를 해당 카테고리의 '평균 실제수명'으로 변환
+# Random Forest는 이 숫자를 통해 "이 부서는 보통 수명이 짧구나"를 즉각 이해함
+categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스']
+
+for col in categorical_cols:
+    df_final[col] = df_final[col].fillna('Unknown').astype(str)
+    
+    # 학습 데이터(Train)에서 각 카테고리별 평균 수명 및 빈도수 계산
+    target_mean = df_final[train_mask].groupby(col)['실제수명'].mean()
+    category_counts = df_final[train_mask][col].value_counts()
+    # 스무딩(Smoothing)을 적용하여 평균 계산 (과적합 방지)
+    smoothing_factor = 10  # 스무딩 강도 조절 계수 (하이퍼파라미터)
+    smoothed_mean = (target_mean * category_counts + global_mean_life * smoothing_factor) / (category_counts + smoothing_factor)
+    
+    # 전체 데이터셋에 매핑 (Train에 없던 카테고리는 전체 평균으로 채움)
+    df_final[f'{col}_Code'] = df_final[col].map(smoothed_mean).fillna(global_mean_life)
+print(f"✅ 타겟 인코딩 완료 (결측치 대체값: {global_mean_life:.2f}년)")
 # ---------------------------------------------------------
 # 5. 데이터 분할 및 저장 (Train / Valid / Test / Pred)
 # ---------------------------------------------------------
-df_train_source = df_final[df_final['학습데이터여부'] == 'Y'].copy().sort_values(by='취득일자')
+df_train_source = df_final[df_final['학습데이터여부'] == 'Y'].copy()
 
-# 시계열성이 있는 자산 데이터이므로 랜덤 셔플링보다는 취득일자 순으로 잘라서 
-# 과거 데이터로 미래를 예측하는 Time-Series Split 방식을 흉내내는 것이 좋음
-n_total = len(df_train_source)
-n_train, n_valid = int(n_total * 0.7), int(n_total * 0.2)
+# 시간 기반 분할: Train(70%) / Valid(20%) / Test(10%)
+# - '취득일자'를 기준으로 시계열 블록 분할을 수행
+# - 실제 운영에서는 과거 데이터로 미래를 예측하므로, 테스트 세트는 항상 가장 최근 데이터가 되도록 구성
+date_col = '취득일자'
+df_time_split = df_train_source.copy()
 
-df_final['데이터세트구분'] = 'Prediction' # 기본값은 예측 대상
-df_final.loc[df_train_source.iloc[:n_train].index, '데이터세트구분'] = 'Train'
-df_final.loc[df_train_source.iloc[n_train : n_train + n_valid].index, '데이터세트구분'] = 'Valid'
-df_final.loc[df_train_source.iloc[n_train + n_valid:].index,  '데이터세트구분'] = 'Test'
+# 확실한 시계열 계산을 위해 datetime 타입으로 변환
+df_time_split[date_col] = pd.to_datetime(df_time_split[date_col])
+
+# 70%, 90% 분위수 기준으로 시점 경계 설정 (≈ Train 70% / Valid 20% / Test 10%)
+quantiles = df_time_split[date_col].quantile([0.7, 0.9])
+train_cutoff = quantiles.loc[0.7]
+test_cutoff = quantiles.loc[0.9]
+
+train_idx = df_time_split[df_time_split[date_col] < train_cutoff].index
+valid_idx = df_time_split[
+    (df_time_split[date_col] >= train_cutoff) & (df_time_split[date_col] < test_cutoff)
+].index
+test_idx = df_time_split[df_time_split[date_col] >= test_cutoff].index
+
+# 데이터세트 구분 컬럼에 결과 매핑
+df_final['데이터세트구분'] = 'Prediction'  # 기본값은 예측 대상 (학습데이터여부 == 'N')
+df_final.loc[train_idx, '데이터세트구분'] = 'Train'
+df_final.loc[valid_idx, '데이터세트구분'] = 'Valid'
+df_final.loc[test_idx, '데이터세트구분'] = 'Test'
 
 # 최종 출력 컬럼 지정 (컬럼정의서 매핑 반영 & 데이터 누수 방지)
 output_cols = [
