@@ -20,6 +20,8 @@ now = TODAY # 코드 내 now 변수 호환용
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data_lifecycle") # create_data/data_lifecycle
 os.makedirs(DATA_DIR, exist_ok=True)
+
+SIGMA_SCALING_FACTOR = 0.1 # 표준편차 조정 계수 (현실적 변동성 반영용)
 # ---------------------------------------------------------
 # [NEW] 현실 기반 물품별 기대 수명 통계 (평균 μ, 표준편차 σ) - 단위: 년
 # 출처: SquareTrade, ScienceDirect, Google Research, MS/OEM Guide 등
@@ -655,7 +657,7 @@ for row in df_operation.itertuples():
             
     # [NEW] 2. 정규분포(Normal Distribution)에서 샘플링 및 AI용 패턴 부여
     # - mu(평균)와 sigma(표준편차)를 이용해 기본 랜덤 수명 생성
-    base_life_years = max(1.0, np.random.normal(mu, sigma))
+    base_life_years = max(1.0, np.random.normal(mu, sigma * SIGMA_SCALING_FACTOR))
     
     # ---------------------------------------------------------
     # [NEW] 3. 데이터 패턴 부여: AI 모델 학습을 위한 가중치 적용 

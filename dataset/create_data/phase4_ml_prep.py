@@ -242,11 +242,31 @@ df_final['안전버퍼'] = 0.0
 df_final['권장발주일'] = pd.NaT
 df_final['예측실행일자'] = today.strftime('%Y-%m-%d')
 
-# 범주형 수치화 (모델이 이해할 수 있도록 라벨 인코딩)
-for col in ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스']:
-    df_final[col] = df_final[col].fillna('Unknown').astype(str)
-    df_final[f'{col}_Code'] = pd.factorize(df_final[col], sort=True)[0]
+# ---------------------------------------------------------
+# 💡 [Upgrade] Target Encoding 적용 (기존 pd.factorize 대체)
+# ---------------------------------------------------------
+# 1. 학습 데이터 마스크 생성 및 전체 평균(Global Mean) 계산
+# (학습 데이터에 없는 새로운 카테고리가 나타날 경우를 대비해 전체 평균 수명을 계산해둠)
+train_mask = df_final['학습데이터여부'] == 'Y'
+global_mean_life = df_final.loc[train_mask, '실제수명'].mean()
 
+# 2. 범주형 변수를 해당 카테고리의 '평균 실제수명'으로 변환
+# Random Forest는 이 숫자를 통해 "이 부서는 보통 수명이 짧구나"를 즉각 이해함
+categorical_cols = ['G2B목록명', '물품분류명', '운용부서코드', '캠퍼스']
+
+for col in categorical_cols:
+    df_final[col] = df_final[col].fillna('Unknown').astype(str)
+    
+    # 학습 데이터(Train)에서 각 카테고리별 평균 수명 및 빈도수 계산
+    target_mean = df_final[train_mask].groupby(col)['실제수명'].mean()
+    category_counts = df_final[train_mask][col].value_counts()
+    # 스무딩(Smoothing)을 적용하여 평균 계산 (과적합 방지)
+    smoothing_factor = 10  # 스무딩 강도 조절 계수 (하이퍼파라미터)
+    smoothed_mean = (target_mean * category_counts + global_mean_life * smoothing_factor) / (category_counts + smoothing_factor)
+    
+    # 전체 데이터셋에 매핑 (Train에 없던 카테고리는 전체 평균으로 채움)
+    df_final[f'{col}_Code'] = df_final[col].map(smoothed_mean).fillna(global_mean_life)
+print(f"✅ 타겟 인코딩 완료 (결측치 대체값: {global_mean_life:.2f}년)")
 # ---------------------------------------------------------
 # 5. 데이터 분할 및 저장 (Train / Valid / Test / Pred)
 # ---------------------------------------------------------
