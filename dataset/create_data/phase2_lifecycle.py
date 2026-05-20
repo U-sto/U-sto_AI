@@ -59,7 +59,7 @@ PROBS_RETURN_REASON = [0.6, 0.15, 0.25]
 
 # 2. 불용 사유 (물리적/규정적 요인)
 # - 수명(Normal Dist)이 다했을 때 선택될 사유들
-REASONS_PHYSICAL_END = ['고장/파손', '노후화(성능저하)', '수리비용과다']
+REASONS_PHYSICAL_END = ['고장/파손', '노후화', '수리비용과다','활용부서부재','구형화', '내용연수경과']
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
@@ -428,7 +428,7 @@ def step_process_return(ctx, event_date):
     if reason == '잉여물품':
         condition = '신품'
     elif reason == '사업종료':
-        condition = np.random.choice(['신품', '중고품','정비필요품'], p=[0.4, 0.5, 0.1])
+        condition = np.random.choice(['신품', '중고품','요정비품'], p=[0.4, 0.5, 0.1])
     elif reason == '공용전환':
         condition = np.random.choice(['신품', '중고품'], p=[0.3, 0.7])
     
@@ -504,16 +504,16 @@ def step_process_disuse(ctx, trigger_event, inherited_reason=None):
     if trigger_event == '불용신청':
         # [NEW] 현실 수명이 다해서 오는 경우 -> 물리적 사유 선택
         reason = random.choice(REASONS_PHYSICAL_END)
-        condition = '폐품' if reason in ['고장/파손'] else '불용품'
+        condition = '폐품' # 모든 불용 상태는 폐품으로 통일
         prev_stat = '운용' # 반납 거치지 않고 바로 옴
         
     elif trigger_event == '불용진행':
         # 반납 후 불용으로 넘어오는 경우 (사유 상속 또는 매핑)
         # 사유: 활용부서 부재, 구형화 등
-        if inherited_reason in ['잉여물품', '사업종료']:
+        if inherited_reason in ['잉여물품', '사업종료','공용전환']:
             reason = np.random.choice(['활용부서부재', '구형화'], p =[0.7, 0.3])
-        else:
-            reason = inherited_reason # 공용전환 등
+        # else:
+        #     reason = inherited_reason # 공용전환 등
             
         condition = ctx['curr_condition']
         prev_stat = '반납'
@@ -524,7 +524,7 @@ def step_process_disuse(ctx, trigger_event, inherited_reason=None):
 
     else:
         reason = '기타'
-        condition = '불용품'
+        condition = '폐품'
         prev_stat = '운용'
     
     # 2. 불용 승인 처리
