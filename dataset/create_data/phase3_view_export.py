@@ -39,10 +39,17 @@ try:
 
     print(f"   - 운용 마스터: {len(df_op)}건")
 
-    # 리뷰어 지적 사항: 과거 부서 정보 복원을 위해 운용신청 이력 로드
-    path_req = os.path.join(LOAD_DIR, '04_02_operation_req_list.csv')
-    if os.path.exists(path_req):
-        df_req = safe_read_csv(path_req)
+    # 리뷰어 지적 사항: 과거 부서 정보 복원을 위해 운용전환 이력 로드
+    # Phase 2의 실제 저장 파일명은 04_02_operation_transfer_list.csv이므로 우선 사용하고,
+    # 과거 파일명이 남아있는 경우만 legacy 이름을 fallback으로 읽는다.
+    path_transfer = os.path.join(LOAD_DIR, '04_02_operation_transfer_list.csv')
+    path_req_legacy = os.path.join(LOAD_DIR, '04_02_operation_req_list.csv')
+    if os.path.exists(path_transfer):
+        df_req = safe_read_csv(path_transfer)
+        if '운용전환일자' in df_req.columns and '운용신청일자' not in df_req.columns:
+            df_req = df_req.rename(columns={'운용전환일자': '운용신청일자'})
+    elif os.path.exists(path_req_legacy):
+        df_req = safe_read_csv(path_req_legacy)
     else:
         df_req = pd.DataFrame(columns=['물품고유번호', '운용부서', '운용신청일자'])
         

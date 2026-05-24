@@ -1,0 +1,12 @@
+{
+  "model": "XGBoost",
+  "valid_rmse_months": 9.229518646938768,
+  "test_rmse_months": 18.235695645760337,
+  "test_mae_months": 14.050782091306601,
+  "test_r2": 0.8306637639098359,
+  "term_precision": 1.0,
+  "term_recall": 0.7975543478260869,
+  "term_f1": 0.8873771730914588,
+  "best_params_json": "{\"n_estimators\": 500, \"max_depth\": 3, \"learning_rate\": 0.1, \"subsample\": 0.85, \"colsample_bytree\": 0.85, \"min_child_weight\": 1, \"reg_lambda\": 1.0}",
+  "run_id": "20260524_115653"
+}

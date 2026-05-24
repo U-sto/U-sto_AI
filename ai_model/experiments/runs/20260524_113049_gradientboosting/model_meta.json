@@ -1,0 +1,24 @@
+{
+  "run_id": "20260524_113049",
+  "model_name": "GradientBoosting",
+  "target": "실제수명_개월",
+  "features": [
+    "내용연수",
+    "취득금액",
+    "부서가혹도",
+    "가격민감도",
+    "장비중요도",
+    "리드타임등급",
+    "취득월",
+    "G2B목록명_Code",
+    "물품분류명_Code",
+    "운용부서코드_Code",
+    "캠퍼스_Code"
+  ],
+  "rmse_months": 19.733843253702464,
+  "mae_months": 14.995207899576943,
+  "r2": 0.7913503420588633,
+  "trained_at": "2026-05-24 11:30:49",
+  "data_path": "dataset\\create_data\\data_ml\\phase4_training_data.csv",
+  "split_rule": "Train+Valid train, Test evaluation, Prediction inference"
+}

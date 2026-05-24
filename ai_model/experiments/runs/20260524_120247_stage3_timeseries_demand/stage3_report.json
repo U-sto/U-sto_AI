@@ -1,0 +1,28 @@
+{
+  "run_id": "20260524_120247",
+  "data_path": "dataset\\create_data\\data_ml\\phase4_training_data.csv",
+  "run_dir": "ai_model\\experiments\\runs\\20260524_120247_stage3_timeseries_demand",
+  "monthly_period": {
+    "start": "2006-05-01",
+    "end": "2026-02-01",
+    "months": 238
+  },
+  "split": {
+    "train_months": 220,
+    "valid_months": 6,
+    "test_months": 12,
+    "test_start": "2025-03-01",
+    "test_end": "2026-02-01"
+  },
+  "best_model": {
+    "model": "MovingAverage6",
+    "monthly_rmse_count": 10.23474474522936,
+    "monthly_mae_count": 8.166666666666666,
+    "monthly_smape_pct": 19.76262901739821,
+    "monthly_r2": -0.1058651026392965,
+    "elapsed_sec": 0.0007350000087171793,
+    "source_model_dir": NaN
+  },
+  "elapsed_sec": 3.076181899989024,
+  "note": "Stage 3 is a monthly demand backtest. It is a support experiment for demand charts, not a direct replacement for rf_final_model.pkl."
+}

@@ -14,14 +14,20 @@
 ai_model/notebooks/02_Modeling_RF.ipynb
 ```
 
-현재 기준 모델은 `RandomForestRegressor`이며, 노트북 출력 기준 성능은 대략 다음과 같다.
+현재 기준 모델은 `RandomForestRegressor`이다. 기존 `02_Modeling_RF.ipynb`에 저장되어 있던 출력에는 아래 성능이 남아 있었다.
 
 - Baseline RF RMSE: 약 `3.09`개월
 - Tuned RF RMSE: 약 `3.06`개월
 - Tuned RF MAE: 약 `1.50`개월
 - Tuned RF R2: 약 `0.92`
 
-이 값은 이후 실험의 1차 비교 기준으로 사용한다.
+다만 2026-05-24 기준 로컬 `venv`와 현재 `phase4_training_data.csv`로 기존 RF 학습 조건을 재현했을 때 위 값은 재현되지 않았다. 현재 재현 가능한 RF 기준선은 아래와 같다.
+
+- Default RF RMSE: 약 `3.72`개월
+- 기존 tuned parameter RF RMSE: 약 `3.80`개월
+- GridSearch 재실행 RF RMSE: 약 `3.91`개월
+
+따라서 이후 실험의 1차 비교 기준은 새 벤치마크 노트북에서 생성하는 `ai_model/experiments/model_comparison.csv`를 기준으로 한다.
 
 ## 3. 실행 환경
 
@@ -273,3 +279,65 @@ ai_model/experiments/model_comparison.csv
 3. RF, ExtraTrees, XGBoost, LightGBM, CatBoost를 같은 split으로 비교한다.
 4. 상위 2개 모델만 튜닝한다.
 5. 최종 모델을 기존 배포 파일명으로 저장하고 서버/UI에서 한 번 검증한다.
+
+## 12. 진행 기록
+
+### 1차 벤치마크
+
+2026-05-24 기준 `03_Modeling_Experiment_Benchmark.ipynb`에서 1차 모델 비교를 실행했다. 결과 파일은 `ai_model/experiments/model_comparison.csv`이다.
+
+상위 결과는 다음과 같다.
+
+- ExtraTrees: Test RMSE `3.5318`개월, MAE `1.5726`개월, R2 `0.8935`
+- XGBoost: Test RMSE `3.7151`개월, MAE `1.4461`개월, R2 `0.8822`
+- CatBoost: Test RMSE `3.7371`개월, MAE `1.4677`개월, R2 `0.8808`
+
+### 2단계 튜닝
+
+2026-05-24 기준 `04_Modeling_Stage2_Tuning.ipynb` 구조로 2단계 튜닝을 진행했다. 3-fold CV 기반 튜닝은 Test 성능이 1차 ExtraTrees보다 좋아지지 않았기 때문에, 기존 데이터의 `Train`, `Valid`, `Test` 분할 의미를 살려 Valid 기반 선택 절차를 추가했다.
+
+최종 절차는 `Train`으로 파라미터 후보를 비교하고, `Valid` RMSE로 파라미터를 선택한 뒤, `Train+Valid` 전체로 재학습하고 `Test`를 최종 평가하는 방식이다.
+
+2단계 결과 파일은 `ai_model/experiments/stage2_valid_tuning_results.csv`이며, 최상위 모델은 CatBoost이다.
+
+- CatBoost: Test RMSE `3.4684`개월, MAE `1.4099`개월, R2 `0.8973`
+- XGBoost: Test RMSE `3.8071`개월, MAE `1.5028`개월, R2 `0.8762`
+- RandomForest: Test RMSE `3.9139`개월, MAE `1.5801`개월, R2 `0.8692`
+- ExtraTrees: Test RMSE `3.9447`개월, MAE `1.6052`개월, R2 `0.8671`
+
+현재 기준으로는 1차 ExtraTrees보다 2단계 CatBoost가 더 좋은 최종 후보이다. 다만 서버 배포 경로는 아직 덮어쓰지 않았다.
+
+### 3단계 월별 수요 예측 보조 실험
+
+2026-05-24 기준 `05_Modeling_Stage3_TimeSeries_Demand.ipynb`와 `run_stage3_timeseries_demand.py`를 추가했다. 3단계는 자산별 총수명 예측 모델을 직접 교체하는 단계가 아니라, 월별 고장/처분 수요 그래프와 조달 수량 산정의 안정성을 확인하는 보조 실험이다.
+
+최신 결과 파일은 `ai_model/experiments/stage3_timeseries_demand_results.csv`이며, 실행 산출물은 `ai_model/experiments/runs/20260524_120335_stage3_timeseries_demand`에 저장했다.
+
+- MovingAverage6: 월별 수요 RMSE `10.2347`건, MAE `8.1667`건
+- SARIMAX: 월별 수요 RMSE `10.8389`건, MAE `9.0640`건
+- XGBoostLag: 월별 수요 RMSE `12.6105`건, MAE `10.3315`건
+- SARIMAX + XGBoost Residual: 월별 수요 RMSE `13.1349`건, MAE `10.6182`건
+- SeasonalNaive: 월별 수요 RMSE `14.8015`건, MAE `12.2500`건
+- Stage2AssetModelMonthly: 월별 수요 RMSE `15.4765`건, MAE `12.0000`건
+
+현재 합성 데이터에서는 복잡한 시계열 모델보다 최근 6개월 이동평균이 월별 총량 예측에는 가장 안정적이었다. 따라서 3단계 결과는 최종 `rf_final_model.pkl` 교체 후보라기보다, UI의 월별 수요 그래프를 보정하거나 조달 계획의 월별 총량 기준선을 제시하는 보조 로직으로 해석한다.
+
+### 4~6단계 최종 검증 및 취득일자 holdout
+
+2026-05-24 기준 `06_Modeling_Stage4_6_Final_Validation.ipynb`와 `run_stage4_6_final_validation.py`를 추가했다. 4단계에서는 2단계 산출물과 단순 앙상블을 비교했고, 추가 검증으로 `취득일자` 기준 최근 20% 구간을 holdout으로 분리해 재학습/검증했다. 5단계에서는 Prediction 대상에 대해 RUL, 예측 고장월 smoke test를 수행했고, 6단계에서는 최종 후보와 서버 호환성을 점검했다.
+
+최신 실행 산출물은 `ai_model/experiments/runs/20260524_121229_stage4_6_final_validation`에 저장했다. 요약 결과는 `ai_model/experiments/stage4_6_final_validation_results.csv`, 최종 리포트는 `ai_model/experiments/final_model_selection_report.md`이다.
+
+기존 Test split 기준 상위 결과는 다음과 같다.
+
+- ExtraTrees: RMSE `17.7531`개월, MAE `13.5592`개월, R2 `0.8395`, 학기 내 고장 F1 `0.8738`
+- AverageTop2: RMSE `17.8912`개월, MAE `13.7364`개월, R2 `0.8370`, 학기 내 고장 F1 `0.8798`
+- AverageTop3: RMSE `17.9909`개월, MAE `13.8287`개월, R2 `0.8352`, 학기 내 고장 F1 `0.8832`
+
+취득일자 기준 최근 holdout 검증의 cutoff는 `2016-11-13`이며, 오래된 취득건 5,738건으로 학습하고 최근 취득건 1,436건으로 검증했다. 상위 결과는 다음과 같다.
+
+- ExtraTrees: RMSE `15.9289`개월, MAE `12.5267`개월, R2 `0.5042`, 학기 내 고장 F1 `0.6838`
+- AverageTop2: RMSE `15.9344`개월, MAE `12.5529`개월, R2 `0.5039`, 학기 내 고장 F1 `0.6844`
+- AverageAll4: RMSE `15.9522`개월, MAE `12.5696`개월, R2 `0.5027`, 학기 내 고장 F1 `0.6838`
+
+결론적으로 현재 데이터에서는 앙상블이 단일 ExtraTrees보다 RMSE를 낮추지 못했다. 최종 후보는 ExtraTrees로 유지하되, 실제 서버 배포 전에는 서버 입력 feature와 후처리 로직을 맞춰야 한다. 현재 서버는 feature 9개를 하드코딩하고 있으나 최종 모델은 11개 feature를 사용하며, 서버는 총수명 예측값에서 `운용연차 * 12`를 뺀 RUL 계산 없이 현재일에 바로 더하고 있다.

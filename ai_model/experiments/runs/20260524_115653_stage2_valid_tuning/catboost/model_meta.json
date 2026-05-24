@@ -1,0 +1,33 @@
+{
+  "run_id": "20260524_115653",
+  "stage": "stage2_valid_tuning",
+  "model_name": "CatBoost",
+  "target": "실제수명_개월",
+  "features": [
+    "내용연수",
+    "취득금액",
+    "부서가혹도",
+    "가격민감도",
+    "장비중요도",
+    "리드타임등급",
+    "취득월",
+    "G2B목록명_Code",
+    "물품분류명_Code",
+    "운용부서코드_Code",
+    "캠퍼스_Code"
+  ],
+  "rmse_months": 18.50546366737466,
+  "mae_months": 14.311821713730252,
+  "r2": 0.8256165866860798,
+  "valid_rmse_months": 9.272885207090896,
+  "best_params": {
+    "iterations": 800,
+    "depth": 7,
+    "learning_rate": 0.05,
+    "l2_leaf_reg": 5,
+    "subsample": 1.0
+  },
+  "trained_at": "2026-05-24 11:57:00",
+  "data_path": "dataset\\create_data\\data_ml\\phase4_training_data.csv",
+  "split_rule": "Train parameter selection, Train+Valid retrain, Test final evaluation"
+}

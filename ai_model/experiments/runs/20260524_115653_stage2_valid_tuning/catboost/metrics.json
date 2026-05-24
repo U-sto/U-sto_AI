@@ -1,0 +1,12 @@
+{
+  "model": "CatBoost",
+  "valid_rmse_months": 9.272885207090896,
+  "test_rmse_months": 18.50546366737466,
+  "test_mae_months": 14.311821713730252,
+  "test_r2": 0.8256165866860798,
+  "term_precision": 1.0,
+  "term_recall": 0.8029891304347826,
+  "term_f1": 0.8907309721175584,
+  "best_params_json": "{\"iterations\": 800, \"depth\": 7, \"learning_rate\": 0.05, \"l2_leaf_reg\": 5, \"subsample\": 1.0}",
+  "run_id": "20260524_115653"
+}

@@ -1,0 +1,33 @@
+{
+  "run_id": "20260524_115653",
+  "stage": "stage2_valid_tuning",
+  "model_name": "RandomForest",
+  "target": "실제수명_개월",
+  "features": [
+    "내용연수",
+    "취득금액",
+    "부서가혹도",
+    "가격민감도",
+    "장비중요도",
+    "리드타임등급",
+    "취득월",
+    "G2B목록명_Code",
+    "물품분류명_Code",
+    "운용부서코드_Code",
+    "캠퍼스_Code"
+  ],
+  "rmse_months": 18.286698129095058,
+  "mae_months": 14.113112413102234,
+  "r2": 0.8297152236056623,
+  "valid_rmse_months": 9.953720044817448,
+  "best_params": {
+    "n_estimators": 200,
+    "max_depth": 10,
+    "min_samples_split": 5,
+    "min_samples_leaf": 1,
+    "max_features": "sqrt"
+  },
+  "trained_at": "2026-05-24 11:57:06",
+  "data_path": "dataset\\create_data\\data_ml\\phase4_training_data.csv",
+  "split_rule": "Train parameter selection, Train+Valid retrain, Test final evaluation"
+}

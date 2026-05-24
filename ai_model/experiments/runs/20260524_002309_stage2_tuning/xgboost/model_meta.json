@@ -1,0 +1,35 @@
+{
+  "run_id": "20260524_002309",
+  "stage": "stage2_tuning",
+  "model_name": "XGBoost",
+  "target": "????_??",
+  "features": [
+    "내용연수",
+    "취득금액",
+    "부서가혹도",
+    "가격민감도",
+    "장비중요도",
+    "리드타임등급",
+    "취득월",
+    "G2B목록명_Code",
+    "물품분류명_Code",
+    "운용부서코드_Code",
+    "캠퍼스_Code"
+  ],
+  "rmse_months": 3.950215276196099,
+  "mae_months": 1.5509911227326856,
+  "r2": 0.8667656963733308,
+  "cv_rmse_months": 5.761104765435468,
+  "best_params": {
+    "xgbregressor__subsample": 1.0,
+    "xgbregressor__reg_lambda": 0.5,
+    "xgbregressor__n_estimators": 800,
+    "xgbregressor__min_child_weight": 3,
+    "xgbregressor__max_depth": 2,
+    "xgbregressor__learning_rate": 0.1,
+    "xgbregressor__colsample_bytree": 1.0
+  },
+  "trained_at": "2026-05-24 00:24:21",
+  "data_path": "dataset\\create_data\\data_ml\\phase4_training_data.csv",
+  "split_rule": "Train+Valid train with 3-fold CV, Test final evaluation, Prediction inference smoke test"
+}

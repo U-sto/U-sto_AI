@@ -1,0 +1,7 @@
+{
+  "best_model": "ExtraTrees",
+  "prediction_rows": 9126,
+  "term_failure_count": 4543,
+  "min_rul_months": 0.5,
+  "max_rul_months": 182.6
+}

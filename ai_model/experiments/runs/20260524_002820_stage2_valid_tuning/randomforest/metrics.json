@@ -1,0 +1,12 @@
+{
+  "run_id": "20260524_002820",
+  "model": "RandomForest",
+  "valid_rmse_months": 9.953720044817448,
+  "test_rmse_months": 3.9138831342665514,
+  "test_mae_months": 1.580053430564792,
+  "test_r2": 0.8692052730330758,
+  "term_precision": 1.0,
+  "term_recall": 0.9789029535864979,
+  "term_f1": 0.9893390191897654,
+  "best_params_json": "{\"n_estimators\": 200, \"max_depth\": 10, \"min_samples_split\": 5, \"min_samples_leaf\": 1, \"max_features\": \"sqrt\"}"
+}

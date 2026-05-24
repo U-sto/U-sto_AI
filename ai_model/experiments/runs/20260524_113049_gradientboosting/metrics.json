@@ -1,0 +1,10 @@
+{
+  "model": "GradientBoosting",
+  "rmse_months": 19.733843253702464,
+  "mae_months": 14.995207899576943,
+  "r2": 0.7913503420588633,
+  "term_precision": 1.0,
+  "term_recall": 0.7510259917920656,
+  "term_f1": 0.8578125,
+  "elapsed_sec": 0.4396069999784231
+}
