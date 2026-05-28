@@ -1,7 +1,0 @@
-{
-  "best_model": "CatBoost",
-  "prediction_rows": 9091,
-  "term_failure_count": 4554,
-  "min_rul_months": 0.5,
-  "max_rul_months": 186.9
-}

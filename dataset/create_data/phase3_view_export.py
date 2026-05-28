@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 import os
 from pandas.errors import EmptyDataError  # 에러 처리를 위해 import
 
@@ -28,6 +28,7 @@ try:
     # Phase 2 결과물
     df_op = safe_read_csv(os.path.join(LOAD_DIR, '04_01_operation_master.csv'))
     df_rt = safe_read_csv(os.path.join(LOAD_DIR, '04_03_return_list.csv'))
+    df_mt = safe_read_csv(os.path.join(LOAD_DIR, '04_04_maintenance_list.csv'))
     df_du = safe_read_csv(os.path.join(LOAD_DIR, '05_01_disuse_list.csv'))
     df_dp = safe_read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))
     df_hist = safe_read_csv(os.path.join(LOAD_DIR, '99_asset_status_history.csv'))
@@ -57,7 +58,7 @@ try:
     # 날짜나 숫자는 그대로 두어야 오류가 안 남
     str_cols = ['비고', '운용부서', '운용상태', '승인상태', '사유', '물품상태']
     
-    for df in [df_op, df_rt, df_du, df_dp]:
+    for df in [df_op, df_rt, df_mt, df_du, df_dp]:
         for col in str_cols:
             if col in df.columns:
                 df[col] = df[col].fillna('')
@@ -106,6 +107,17 @@ else:
     view_du_item = pd.merge(df_du, df_master_info[cols_to_merge], on='물품고유번호', how='left')
 
 view_du_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_불용물품목록.csv'), index=False, encoding='utf-8-sig')
+
+# [04-04] 점검/수리 이력 조회용 View
+view_maintenance_cols = [
+    '점검수리일자', '물품고유번호', 'G2B_목록번호', 'G2B_목록명', '운용부서',
+    '점검수리구분', '처리결과', '수리비용', '장애심각도', '비고'
+]
+if df_mt.empty:
+    view_maintenance = pd.DataFrame(columns=view_maintenance_cols)
+else:
+    view_maintenance = df_mt.reindex(columns=view_maintenance_cols)
+view_maintenance.to_csv(os.path.join(SAVE_DIR, 'View_04_04_점검수리이력.csv'), index=False, encoding='utf-8-sig')
 
 # [07-01] 보유 현황 조회 (SCD Type 2 History)
 print("   - [07-01] 보유 현황(과거 시점 조회용) 데이터 생성 중...")

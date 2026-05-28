@@ -1,6 +1,10 @@
 import traceback
 import logging
 import json
+import re
+import sys
+from pathlib import Path
+from typing import Any, Iterable
 
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 
@@ -11,14 +15,27 @@ from vectorstore.retriever import retrieve_docs
 from rag.prompt import assemble_prompt, build_question_classifier_prompt, build_query_refine_prompt, build_tool_aware_system_prompt
 from rag.tools import get_item_detail_info, open_usage_prediction_page
 from rag.reranker import CrossEncoderReranker
-from app.config import (
-    NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
-    RERANKER_MODEL_NAME,
-    RERANK_CANDIDATE_K,
-    RERANK_TOP_N,
-    USE_RERANKING,
-    RERANK_DEBUG
-)
+try:
+    from app.config import (
+        NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
+        RERANKER_MODEL_NAME,
+        RERANK_CANDIDATE_K,
+        RERANK_TOP_N,
+        USE_RERANKING,
+        RERANK_DEBUG
+    )
+except ModuleNotFoundError:
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from app.config import (
+        NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
+        RERANKER_MODEL_NAME,
+        RERANK_CANDIDATE_K,
+        RERANK_TOP_N,
+        USE_RERANKING,
+        RERANK_DEBUG
+    )
 
 # [설정] 민감 정보 키 목록 정의
 # 소문자로 정의하여 대소문자 구분 없이 걸러냅니다.
@@ -26,6 +43,17 @@ SENSITIVE_KEYS = {"password", "secret", "token", "auth", "apikey", "ssn", "card_
 
 # 로거 설정 (print 대신 사용)
 logger = logging.getLogger(__name__)
+
+DEFAULT_FINAL_CONTEXT_N = 6
+MAX_CONTEXT_CHARS_PER_DOC = 1400
+MIN_CONTEXT_DOCS = 2
+CONTEXT_DOC_TYPE_PRIORITY = {
+    "manual_chunk": 0,
+    "faq": 1,
+    "domain_guide": 2,
+    "qa": 3,
+}
+COMPARISON_TERMS = ("차이", "비교", "구분", "다른", "vs", "VS")
 
 
 # [최적화] 모듈 레벨 상수 정의 (서버 켜질 때 1번만 실행됨)
@@ -40,6 +68,265 @@ for tool in TOOLS:
         logger.error(f"[Tool Registration Error] Duplicate tool name detected: {tool.name}")
         raise ValueError(f"Duplicate tool name detected: {tool.name}")
     TOOL_MAP[tool.name] = tool
+
+
+def _message_content(response: Any) -> str:
+    """LLM 응답 객체 또는 문자열에서 content 텍스트를 안전하게 추출한다."""
+    if hasattr(response, "content"):
+        return str(response.content)
+    return str(response)
+
+
+def _build_text_chain(template: str, llm):
+    prompt = PromptTemplate.from_template(template)
+    return prompt | llm | StrOutputParser()
+
+
+def classify_question(llm, user_query: str) -> str:
+    """질문이 RAG 검색을 필요로 하는지 분류한다. 실패/모호함은 NEED_RAG로 둔다."""
+    try:
+        chain = _build_text_chain(build_question_classifier_prompt(), llm)
+        raw = chain.invoke({"question": user_query})
+    except Exception as exc:
+        logger.warning("[Question Classification] failed, fallback to NEED_RAG: %s", exc)
+        return "NEED_RAG"
+
+    normalized = str(raw).strip().upper()
+    match = re.search(r"\b(NEED_RAG|NO_RAG)\b", normalized)
+    if not match:
+        logger.warning("[Question Classification] invalid output %r, fallback to NEED_RAG", raw)
+        return "NEED_RAG"
+    return match.group(1)
+
+
+def refine_query(llm, user_query: str) -> str:
+    """검색용 질의를 생성한다. 출력이 불안정하면 원 질문으로 되돌린다."""
+    try:
+        chain = _build_text_chain(build_query_refine_prompt(), llm)
+        refined = str(chain.invoke({"question": user_query})).strip()
+    except Exception as exc:
+        logger.warning("[Query Refinement] failed, fallback to original query: %s", exc)
+        return user_query
+
+    refined = refined.replace("```", "").strip()
+    if not refined:
+        return user_query
+    if "\n" in refined:
+        refined = next((line.strip() for line in refined.splitlines() if line.strip()), user_query)
+    return refined[:500]
+
+
+def _doc_key(doc) -> str:
+    metadata = getattr(doc, "metadata", {}) or {}
+    return str(
+        metadata.get("doc_id")
+        or (metadata.get("source"), metadata.get("chapter"), metadata.get("title"), metadata.get("chunk_index"))
+        or id(doc)
+    )
+
+
+def _merge_retrieval_results(result_sets: Iterable[Iterable[tuple]]) -> list[tuple]:
+    """여러 검색 결과에서 같은 문서는 가장 좋은 거리 점수만 남긴다."""
+    merged: dict[str, tuple] = {}
+    for results in result_sets:
+        for doc, score in results:
+            key = _doc_key(doc)
+            if key not in merged or score < merged[key][1]:
+                merged[key] = (doc, score)
+    return sorted(merged.values(), key=lambda item: item[1])
+
+
+def retrieve_candidate_docs(vectordb, user_query: str, refined_query: str, top_k: int) -> list[tuple]:
+    """원 질문과 정제 질문을 함께 검색해 query rewrite 실패 위험을 줄인다."""
+    refined_results = retrieve_docs(vectordb=vectordb, query=refined_query, top_k=top_k)
+    if refined_query.strip() == user_query.strip():
+        return refined_results
+
+    original_k = max(5, top_k // 2)
+    original_results = retrieve_docs(vectordb=vectordb, query=user_query, top_k=original_k)
+    merged = _merge_retrieval_results([refined_results, original_results])
+    logger.info(
+        "[Retrieval] refined=%d original=%d merged=%d",
+        len(refined_results),
+        len(original_results),
+        len(merged),
+    )
+    return merged[:top_k]
+
+
+def filter_retrieved_docs(retrieved_docs: list[tuple], threshold: float = SIMILARITY_SCORE_THRESHOLD) -> list[tuple]:
+    """
+    Chroma 거리 점수를 기반으로 후보를 필터링한다.
+    설정 threshold가 지나치게 넓으면 top-1 대비 점수 차이를 이용해 잡음 문서를 줄인다.
+    """
+    if not retrieved_docs:
+        return []
+
+    docs = sorted(retrieved_docs, key=lambda item: item[1])
+    if threshold is not None and threshold < 10.0:
+        filtered = [(doc, score) for doc, score in docs if score <= threshold]
+        return filtered or docs[:MIN_CONTEXT_DOCS]
+
+    best_score = docs[0][1]
+    adaptive_margin = max(0.20, abs(best_score) * 0.35)
+    adaptive_cutoff = best_score + adaptive_margin
+    filtered = [(doc, score) for doc, score in docs if score <= adaptive_cutoff]
+
+    if len(filtered) < MIN_CONTEXT_DOCS:
+        filtered = docs[:MIN_CONTEXT_DOCS]
+
+    logger.info(
+        "[Retrieval Filter] best=%.4f cutoff=%.4f kept=%d/%d",
+        best_score,
+        adaptive_cutoff,
+        len(filtered),
+        len(docs),
+    )
+    return filtered
+
+
+def _select_diverse_docs(docs: list, max_docs: int) -> list:
+    """같은 source/chapter/title 문서가 과하게 몰리지 않도록 최종 context를 고른다."""
+    selected = []
+    seen_doc_ids = set()
+    group_counts: dict[tuple, int] = {}
+
+    for doc in docs:
+        metadata = getattr(doc, "metadata", {}) or {}
+        doc_id = _doc_key(doc)
+        if doc_id in seen_doc_ids:
+            continue
+
+        group = (
+            metadata.get("source"),
+            metadata.get("chapter"),
+            metadata.get("title"),
+        )
+        if group_counts.get(group, 0) >= 2 and len(selected) >= MIN_CONTEXT_DOCS:
+            continue
+
+        selected.append(doc)
+        seen_doc_ids.add(doc_id)
+        group_counts[group] = group_counts.get(group, 0) + 1
+
+        if len(selected) >= max_docs:
+            break
+
+    if len(selected) < min(max_docs, MIN_CONTEXT_DOCS):
+        for doc in docs:
+            doc_id = _doc_key(doc)
+            if doc_id not in seen_doc_ids:
+                selected.append(doc)
+                seen_doc_ids.add(doc_id)
+            if len(selected) >= min(max_docs, MIN_CONTEXT_DOCS):
+                break
+
+    return selected
+
+
+def _is_comparison_query(query: str) -> bool:
+    return any(term in query for term in COMPARISON_TERMS)
+
+
+def _category_counts(docs: list) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for doc in docs:
+        category = (getattr(doc, "metadata", {}) or {}).get("category")
+        if category:
+            counts[category] = counts.get(category, 0) + 1
+    return counts
+
+
+def _focus_docs_by_category(docs: list, query: str, min_keep: int = MIN_CONTEXT_DOCS) -> list:
+    """
+    검색 후보의 주 category가 뚜렷하면 최종 context를 그 category 중심으로 압축한다.
+    비교 질문은 여러 category가 필요하므로 압축을 느슨하게 둔다.
+    """
+    if len(docs) <= min_keep or _is_comparison_query(query):
+        return docs
+
+    counts = _category_counts(docs[: min(len(docs), 8)])
+    if not counts:
+        return docs
+
+    dominant_category, dominant_count = max(counts.items(), key=lambda item: item[1])
+    if dominant_count < 2:
+        return docs
+
+    focused = [
+        doc
+        for doc in docs
+        if (getattr(doc, "metadata", {}) or {}).get("category") == dominant_category
+    ]
+    if len(focused) < min_keep:
+        return docs
+
+    logger.info(
+        "[Context Focus] dominant_category=%s kept=%d/%d",
+        dominant_category,
+        len(focused),
+        len(docs),
+    )
+    return focused
+
+
+def _sort_docs_for_context(docs: list) -> list:
+    """
+    최종 답변 근거는 원문 매뉴얼과 FAQ를 QA 매칭 문서보다 우선한다.
+    QA 문서는 질문 매칭에는 유용하지만 답변 근거로는 원문보다 보조 자료에 가깝다.
+    """
+    sorted_items = sorted(
+        enumerate(docs),
+        key=lambda item: (
+            CONTEXT_DOC_TYPE_PRIORITY.get(
+                (getattr(item[1], "metadata", {}) or {}).get("doc_type", "qa"),
+                3,
+            ),
+            item[0],
+        ),
+    )
+    return [doc for _index, doc in sorted_items]
+
+
+def _format_context(top_docs: list) -> str:
+    blocks = []
+    for index, doc in enumerate(top_docs, start=1):
+        metadata = getattr(doc, "metadata", {}) or {}
+        content = str(getattr(doc, "page_content", "") or "").strip()
+        if len(content) > MAX_CONTEXT_CHARS_PER_DOC:
+            content = content[:MAX_CONTEXT_CHARS_PER_DOC].rstrip() + "..."
+        blocks.append(
+            "\n".join(
+                [
+                    f"[문서 {index}]",
+                    f"doc_type={metadata.get('doc_type', 'qa')}",
+                    f"doc_id={metadata.get('doc_id', '')}",
+                    f"source={metadata.get('source', '')}",
+                    f"chapter={metadata.get('chapter', '')}",
+                    f"category={metadata.get('category', '')}",
+                    f"title={metadata.get('title', '')}",
+                    content,
+                ]
+            )
+        )
+    return "\n\n".join(blocks)
+
+
+def _build_attribution(top_docs: list) -> list[dict]:
+    attribution = []
+    for doc in top_docs:
+        metadata = getattr(doc, "metadata", {}) or {}
+        attribution.append(
+            {
+                "doc_id": metadata.get("doc_id"),
+                "source": metadata.get("source"),
+                "chapter": metadata.get("chapter"),
+                "category": metadata.get("category"),
+                "title": metadata.get("title"),
+                "doc_type": metadata.get("doc_type", "qa"),
+            }
+        )
+    return attribution
 
 
 def run_rag_chain(
@@ -239,78 +526,57 @@ def run_rag_chain(
     except Exception as e:
         logger.error(f"[Tool System Error] 도구 처리 중 오류 -> RAG로 전환: {e}", exc_info=True)
 
-    # 0. 질문 분류 (LLM-first 판단)
-    classifier_prompt = PromptTemplate.from_template(
-    build_question_classifier_prompt()
-)
-    classifier_chain = classifier_prompt | llm | StrOutputParser()
-
-    classification = classifier_chain.invoke({"question": user_query}) # 사용자 질문 전달
-
-    use_rag = classification.strip() == "NEED_RAG" # RAG 필요 여부 판단
-    
-    logger.info(f"[Question Classification] {classification}")
+    # 0. 질문 분류 (업무 도메인 질문은 기본적으로 RAG를 사용)
+    classification = classify_question(llm, user_query)
+    use_rag = classification == "NEED_RAG"
+    logger.info("[Question Classification] %s", classification)
 
     # A. RAG 필요 없는 질문 → LLM 바로 응답
     if not use_rag:
-        prompt = assemble_prompt(
-            context="",              # context 없이
-            question=user_query
-        )
-
-        response = llm.invoke(
-            [HumanMessage(content=prompt)]
-        )
+        response = llm.invoke([HumanMessage(content=user_query)])
 
         return {
-            "answer": response.content,
+            "answer": _message_content(response),
             "attribution": []        # RAG 미사용
         }
     # B. RAG 필요한 경우만 아래 로직 수행
     try:
-        # 질문 정제
-        refine_prompt = PromptTemplate.from_template(
-        build_query_refine_prompt()
-        )
-
-        refine_chain = refine_prompt | llm | StrOutputParser()
-        
-        # LLM에게 검색어 변환 요청
-        refined_query = refine_chain.invoke({"question": user_query})
-        
-        # 로그 확인용 - logging 모듈 사용
-        logger.info(f"[Query Refinement] 원본: '{user_query}' -> 변환: '{refined_query}'")
+        refined_query = refine_query(llm, user_query)
+        logger.info("[Query Refinement] 원본=%r -> 변환=%r", user_query, refined_query)
 
         # 1. Retrieval (검색)
-        retrieved_docs = retrieve_docs(
+        retrieved_docs = retrieve_candidate_docs(
             vectordb=vectordb,
-            query=refined_query,   # [CHANGED] user_query -> refined_query
+            user_query=user_query,
+            refined_query=refined_query,
             top_k=retriever_top_k
         )
 
-        # 검색 실패 시 fallback
         if not retrieved_docs:
-            context = ""
-            attribution = []
-        else:
-            # 기존 filtering / reranking 로직
-            context = ...
-            attribution = ...
+            return {
+                "answer": NO_CONTEXT_RESPONSE,
+                "attribution": [],
+                "diagnostics": {
+                    "classification": classification,
+                    "refined_query": refined_query,
+                    "retrieved_count": 0,
+                },
+            }
 
-
-        # 2️. 유사도 점수 score 기반 필터링
-        # threshold 이하 문서만 유지
-        filtered_docs = [
-            (doc, retrieved_score)
-            for doc, retrieved_score in retrieved_docs
-            if retrieved_score <= SIMILARITY_SCORE_THRESHOLD
-        ]
+        # 2. 유사도 점수 기반 필터링
+        filtered_docs = filter_retrieved_docs(retrieved_docs)
 
         # threshold 통과 문서가 없는 경우 fallback
         if not filtered_docs:
             return {
                 "answer": NO_CONTEXT_RESPONSE,
-                "attribution": []
+                "attribution": [],
+                "diagnostics": {
+                    "classification": classification,
+                    "refined_query": refined_query,
+                    "retrieved_count": len(retrieved_docs),
+                    "filtered_count": 0,
+                },
             }
 
         # reranking 직전 디버깅
@@ -336,13 +602,23 @@ def run_rag_chain(
             if RERANK_DEBUG:
                 logger.debug("[DEBUG] Re-ranking 적용")
 
-            reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
-            
-            # 중요: Re-ranking도 '변환된 질문(refined_query)'과 문서를 비교해야 정확
-            top_docs = reranker.rerank(
-                query=refined_query,  # [CHANGED] user_query -> refined_query
-                docs_with_scores=rerank_candidates,
-                top_n=RERANK_TOP_N
+            try:
+                reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
+                # 중요: Re-ranking도 '변환된 질문(refined_query)'과 문서를 비교해야 정확
+                reranked_docs = reranker.rerank(
+                    query=refined_query,
+                    docs_with_scores=rerank_candidates,
+                    top_n=min(RERANK_TOP_N, DEFAULT_FINAL_CONTEXT_N)
+                )
+            except Exception as exc:
+                logger.warning("[Reranker] disabled for this query, fallback to vector order: %s", exc)
+                reranked_docs = [doc for doc, _ in rerank_candidates[:DEFAULT_FINAL_CONTEXT_N]]
+
+            focused_docs = _focus_docs_by_category(reranked_docs, user_query)
+            context_ordered_docs = _sort_docs_for_context(focused_docs)
+            top_docs = _select_diverse_docs(
+                context_ordered_docs,
+                max_docs=min(RERANK_TOP_N, DEFAULT_FINAL_CONTEXT_N),
             )
 
             # Re-ranking 후 결과 확인 로직 (logger 사용)
@@ -353,24 +629,36 @@ def run_rag_chain(
 
         else:
             # Reranking 안 쓰면 상위 N개만 선택
-            top_docs = [doc for doc, _ in filtered_docs[:TOP_N_CONTEXT]]
+            context_n = min(TOP_N_CONTEXT, DEFAULT_FINAL_CONTEXT_N)
+            ordered_docs = [doc for doc, _ in filtered_docs]
+            focused_docs = _focus_docs_by_category(ordered_docs, user_query)
+            context_ordered_docs = _sort_docs_for_context(focused_docs)
+            top_docs = _select_diverse_docs(context_ordered_docs, max_docs=context_n)
+
+        if not top_docs:
+            return {
+                "answer": NO_CONTEXT_RESPONSE,
+                "attribution": [],
+                "diagnostics": {
+                    "classification": classification,
+                    "refined_query": refined_query,
+                    "retrieved_count": len(retrieved_docs),
+                    "filtered_count": len(filtered_docs),
+                    "final_context_count": 0,
+                },
+            }
 
         # 4. Context 구성
-        # re-ranking 이후에는 Document 리스트만 사용
-        context = "\n\n".join([
-            doc.page_content for doc in top_docs 
-        ])
+        context = _format_context(top_docs)
 
         # 5. Chunk Attribution 구성
-        attribution = [
-            {"doc_id": doc.metadata.get("doc_id")}
-            for doc in top_docs
-        ]
+        attribution = _build_attribution(top_docs)
 
         # 6. 프롬프트 생성
         prompt = assemble_prompt(
             context=context,
-            question=user_query
+            question=user_query,
+            include_function_decision=False,
         )
         
         # 7. LLM 답변 생성
@@ -381,8 +669,30 @@ def run_rag_chain(
         )
 
         return {
-            "answer": response.content,
-            "attribution": attribution
+            "answer": _message_content(response),
+            "attribution": attribution,
+            "diagnostics": {
+                "classification": classification,
+                "refined_query": refined_query,
+                "retrieved_count": len(retrieved_docs),
+                "filtered_count": len(filtered_docs),
+                "final_context_count": len(top_docs),
+                "final_context_doc_types": [
+                    (getattr(doc, "metadata", {}) or {}).get("doc_type", "unknown")
+                    for doc in top_docs
+                ],
+                "final_context_categories": [
+                    (getattr(doc, "metadata", {}) or {}).get("category", "")
+                    for doc in top_docs
+                ],
+                "retrieved_scores": [
+                    {
+                        "doc_id": (getattr(doc, "metadata", {}) or {}).get("doc_id"),
+                        "score": score,
+                    }
+                    for doc, score in retrieved_docs[:10]
+                ],
+            },
         }
 
     except Exception as e:

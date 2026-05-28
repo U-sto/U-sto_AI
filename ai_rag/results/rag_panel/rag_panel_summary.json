@@ -1,0 +1,147 @@
+{
+  "documents": 154,
+  "categories": 19,
+  "sources": 16,
+  "silhouette_cosine_by_category": 0.09556810557842255,
+  "retriever_config": {
+    "retriever_top_k": 25,
+    "rerank_candidate_k": 15,
+    "rerank_top_n": 10,
+    "similarity_threshold": 10.0,
+    "use_reranking": true
+  },
+  "top_k_metrics": [
+    {
+      "k": 1,
+      "category_hit_at_k": 0.4025974025974026,
+      "category_precision_at_k": 0.4025974025974026,
+      "chapter_hit_at_k": 0.17532467532467533,
+      "chapter_precision_at_k": 0.17532467532467533,
+      "source_hit_at_k": 0.44805194805194803,
+      "source_precision_at_k": 0.44805194805194803
+    },
+    {
+      "k": 3,
+      "category_hit_at_k": 0.7337662337662337,
+      "category_precision_at_k": 0.4523809523809524,
+      "chapter_hit_at_k": 0.2597402597402597,
+      "chapter_precision_at_k": 0.09307359307359307,
+      "source_hit_at_k": 0.7207792207792207,
+      "source_precision_at_k": 0.47619047619047616
+    },
+    {
+      "k": 5,
+      "category_hit_at_k": 0.8636363636363636,
+      "category_precision_at_k": 0.4649350649350649,
+      "chapter_hit_at_k": 0.4155844155844156,
+      "chapter_precision_at_k": 0.1,
+      "source_hit_at_k": 0.8766233766233766,
+      "source_precision_at_k": 0.4974025974025974
+    },
+    {
+      "k": 10,
+      "category_hit_at_k": 0.9285714285714286,
+      "category_precision_at_k": 0.43636363636363634,
+      "chapter_hit_at_k": 0.6168831168831169,
+      "chapter_precision_at_k": 0.08181818181818182,
+      "source_hit_at_k": 0.9415584415584416,
+      "source_precision_at_k": 0.4701298701298701
+    },
+    {
+      "k": 25,
+      "category_hit_at_k": 0.961038961038961,
+      "category_precision_at_k": 0.307012987012987,
+      "chapter_hit_at_k": 0.7337662337662337,
+      "chapter_precision_at_k": 0.046753246753246755,
+      "source_hit_at_k": 0.961038961038961,
+      "source_precision_at_k": 0.3236363636363636
+    }
+  ],
+  "category_precision_at_5": [
+    {
+      "category": "물품 취득 관리",
+      "documents": 28,
+      "precision_at_5": 0.4928571428571429,
+      "hit_at_5": 0.8928571428571429
+    },
+    {
+      "category": "물품 불용 관리",
+      "documents": 21,
+      "precision_at_5": 0.44761904761904764,
+      "hit_at_5": 1.0
+    },
+    {
+      "category": "물품 반납 관리",
+      "documents": 19,
+      "precision_at_5": 0.47368421052631576,
+      "hit_at_5": 0.9473684210526315
+    },
+    {
+      "category": "물품 처분 관리",
+      "documents": 19,
+      "precision_at_5": 0.37894736842105264,
+      "hit_at_5": 0.8421052631578947
+    },
+    {
+      "category": "사용주기 AI 예측",
+      "documents": 16,
+      "precision_at_5": 0.825,
+      "hit_at_5": 1.0
+    },
+    {
+      "category": "일반",
+      "documents": 14,
+      "precision_at_5": 0.2571428571428571,
+      "hit_at_5": 0.7142857142857143
+    },
+    {
+      "category": "물품 보유 현황",
+      "documents": 8,
+      "precision_at_5": 0.4,
+      "hit_at_5": 1.0
+    },
+    {
+      "category": "보유현황조회",
+      "documents": 7,
+      "precision_at_5": 0.9142857142857143,
+      "hit_at_5": 1.0
+    },
+    {
+      "category": "AI 챗봇",
+      "documents": 5,
+      "precision_at_5": 0.8,
+      "hit_at_5": 1.0
+    },
+    {
+      "category": "절차",
+      "documents": 5,
+      "precision_at_5": 0.24,
+      "hit_at_5": 0.8
+    },
+    {
+      "category": "개념비교",
+      "documents": 2,
+      "precision_at_5": 0.2,
+      "hit_at_5": 1.0
+    },
+    {
+      "category": "처분/폐기",
+      "documents": 2,
+      "precision_at_5": 0.1,
+      "hit_at_5": 0.5
+    },
+    {
+      "category": "취득/등록",
+      "documents": 2,
+      "precision_at_5": 0.0,
+      "hit_at_5": 0.0
+    }
+  ],
+  "plots": [
+    "C:\\Users\\Hwang_Yulim\\U-sto_AI\\ai_rag\\results\\rag_panel\\01_retrieval_consistency_at_k.png",
+    "C:\\Users\\Hwang_Yulim\\U-sto_AI\\ai_rag\\results\\rag_panel\\02_knowledge_base_category_composition.png",
+    "C:\\Users\\Hwang_Yulim\\U-sto_AI\\ai_rag\\results\\rag_panel\\03_semantic_distance_distribution.png",
+    "C:\\Users\\Hwang_Yulim\\U-sto_AI\\ai_rag\\results\\rag_panel\\04_embedding_space_pca.png",
+    "C:\\Users\\Hwang_Yulim\\U-sto_AI\\ai_rag\\results\\rag_panel\\05_rag_pipeline_funnel.png"
+  ]
+}

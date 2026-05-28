@@ -1,14 +1,28 @@
-from sentence_transformers import CrossEncoder
-from app.config import RERANK_DEBUG
+import sys
+from pathlib import Path
+
+try:
+    from app.config import RERANK_DEBUG
+except ModuleNotFoundError:
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from app.config import RERANK_DEBUG
 
 _reranker_instances = {}
 
 def get_reranker(model_name: str):
     if model_name not in _reranker_instances:
         try:
+            from sentence_transformers import CrossEncoder
+
             if RERANK_DEBUG:
                 print(f"[RERANKER] 모델 로딩: {model_name}")
             _reranker_instances[model_name] = CrossEncoder(model_name)
+        except ModuleNotFoundError as e:
+            raise RuntimeError(
+                "sentence-transformers가 설치되어 있지 않아 reranker를 사용할 수 없습니다."
+            ) from e
         except Exception as e:
             raise RuntimeError(f"CrossEncoder 모델 로딩 실패: {e}")
     return _reranker_instances[model_name]

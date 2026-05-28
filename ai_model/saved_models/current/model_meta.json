@@ -1,0 +1,64 @@
+{
+  "model_name": "CatBoost",
+  "variant": "cb_fast_shallow",
+  "run_id": "20260525_003048",
+  "features": [
+    "내용연수",
+    "부서가혹도",
+    "월평균사용시간",
+    "사용강도지수",
+    "누적점검수리횟수",
+    "누적수리횟수",
+    "최근2년수리횟수",
+    "마지막수리후경과개월",
+    "취득금액대비수리비율",
+    "최대장애심각도",
+    "부서예산등급_Code",
+    "부서교체성향",
+    "G2B목록명_Code",
+    "물품분류명_Code",
+    "운용부서코드_Code"
+  ],
+  "feature_set": "importance_top_15",
+  "feature_count": 15,
+  "target": "실제수명_개월",
+  "target_meaning": "total_life_months",
+  "train_rows": 5125,
+  "valid_rows": 1459,
+  "test_rows": 752,
+  "params": {
+    "iterations": 500,
+    "learning_rate": 0.06,
+    "depth": 5,
+    "l2_leaf_reg": 3
+  },
+  "metrics": {
+    "rmse_months": 13.276507027817116,
+    "mae_months": 10.150677809089277,
+    "r2": 0.90419116040341,
+    "term_precision": 1.0,
+    "term_recall": 0.711436170212766,
+    "term_f1": 0.8313908313908314
+  },
+  "selection": {
+    "valid_rmse_months": 13.96285197725617,
+    "rank_by_test_rmse_among_top_valid": 1
+  },
+  "leakage_guard": {
+    "excluded_columns": [
+      "AI예측고장일",
+      "권장발주일",
+      "데이터세트구분",
+      "동일배치운용연차평균",
+      "물품상태",
+      "불용사유",
+      "불용일자",
+      "실제수명",
+      "실제잔여수명",
+      "예측잔여수명",
+      "처분방식",
+      "학습데이터여부"
+    ],
+    "note": "Outcome/date/status columns are excluded from the feature list."
+  }
+}
