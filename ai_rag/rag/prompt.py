@@ -1,17 +1,36 @@
 import textwrap
-import app.config as config
 import zoneinfo
+import sys
+from pathlib import Path
 from rag.faq_service import get_relevant_faq_string
 from datetime import datetime
+
+try:
+    import app.config as config
+except ModuleNotFoundError:
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    import app.config as config
 
 def build_question_classifier_prompt():
     """
     질문 분류용 프롬프트 반환
     """
     return textwrap.dedent("""
-    다음 질문이
-    1) 사내 시스템 데이터(자산, 물품, 상태 조회)에 의존하는 질문인지
-    2) 일반적인 설명/절차/정책 질문인지 판단하세요.
+    당신은 대학 물품 관리 RAG 챗봇의 라우터입니다.
+    사용자 질문이 매뉴얼/FAQ/업무 지식 검색이 필요한지 판단하세요.
+
+    NEED_RAG로 분류할 질문:
+    - 물품 취득, 등록, 검수, 반납, 불용, 처분, 관리전환, 사용주기, 내용연수, 규정, 절차, 시스템 사용법
+    - "어떻게 해?", "기준이 뭐야?", "차이가 뭐야?", "절차 알려줘"처럼 업무 문서 근거가 필요한 질문
+    - 대학 물품 관리 업무와 관련된 용어가 하나라도 포함된 질문
+
+    NO_RAG로 분류할 질문:
+    - 인사말, 잡담, 자기소개, 챗봇 사용법처럼 업무 문서가 필요 없는 질문
+    - 질문을 다시 써달라는 요청처럼 지식베이스 근거가 필요 없는 요청
+
+    애매하면 사용자의 업무 답변 안정성을 위해 NEED_RAG로 판단하세요.
 
     출력은 반드시 아래 중 하나만:
     - NEED_RAG
@@ -27,7 +46,18 @@ def build_query_refine_prompt():
     """
     return textwrap.dedent("""
     당신은 대학 행정 시스템 검색 전문가입니다.
-    ...
+    사용자 질문을 벡터 검색에 적합한 한국어 검색 질의 1문장으로 바꾸세요.
+
+    규칙:
+    - 원 질문의 핵심 키워드는 삭제하지 마세요.
+    - 물품 취득, 등록, 검수, 반납, 불용, 처분, 관리전환, 사용주기, 내용연수, G2B, 물품고유번호 같은 도메인 용어를 보존하세요.
+    - 구어체 표현은 행정 매뉴얼에서 쓰일 법한 표현으로 정리하세요.
+      예: "버리는 법" -> "물품 불용 또는 처분 절차"
+      예: "돌려주는 법" -> "물품 반납 절차"
+    - G2B목록번호, 물품고유번호, 자산번호, 날짜, 부서명, 물품명은 절대 삭제하지 마세요.
+    - 답변이나 설명을 쓰지 말고 검색 질의만 출력하세요.
+    - 잘 모르겠으면 원 질문을 거의 그대로 유지하세요.
+
     사용자 질문: {question}
     변환된 질문:
     """)
@@ -41,12 +71,13 @@ def build_system_prompt():
     - 본 AI는 대학 물품 관리 시스템 전용 AI 챗봇이다.
 
     [권한]
-    - 제공된 Context는 참고 자료로 활용한다.
-    - Context가 없는 경우에도 일반적인 절차, 정책, 설명은 가능하다.
+    - 제공된 Context를 최우선 근거로 활용한다.
+    - 업무 절차, 정책, 규정, 시스템 사용법은 Context에 근거가 있을 때만 답변한다.
 
     [한계]
     - Context에 없는 정보는 추측하지 않는다.
     - 외부 지식, 일반 상식 사용을 금지한다.
+    - Context가 부족하면 "제공된 매뉴얼 근거만으로는 확인하기 어렵습니다"라고 답한다.
     """)
 
 
@@ -72,8 +103,8 @@ def build_safety_prompt():
     [안전 지침]
     - Context 외 정보 사용 금지
     - 모호한 질문에 대해 임의 해석 금지
-    - 함수 실행을 직접 시도하지 않는다
-    - 필요 시 '함수 호출이 필요함'까지만 판단한다
+    - 서로 다른 절차가 섞여 있으면 Context에서 확인되는 범위만 구분해 답한다
+    - 답변에 포함한 단계, 기준, 예외는 반드시 참고 자료에 근거해야 한다
     """)
 
 
@@ -149,7 +180,7 @@ def build_faq_prompt(question: str) -> str:
     """)
 
 
-def assemble_prompt(context: str, question: str) -> str:
+def assemble_prompt(context: str, question: str, include_function_decision: bool = False) -> str:
     """
     System / Role / Safety / Function 판단 규칙과
     RAG Context, 사용자 질문을 하나의 프롬프트로 조립
@@ -172,10 +203,21 @@ def assemble_prompt(context: str, question: str) -> str:
         if faq_section:
             sections.append(faq_section)
 
-    if config.ENABLE_FUNCTION_DECISION_PROMPT:
+    if include_function_decision and config.ENABLE_FUNCTION_DECISION_PROMPT:
         sections.append(build_function_decision_prompt())
 
-    sections.append(f"[참고 자료]\n{context}")
+    if context.strip():
+        sections.append(f"[참고 자료]\n{context}")
+    else:
+        sections.append("[참고 자료]\n제공된 참고 자료가 없습니다.")
+
+    sections.append(textwrap.dedent("""
+    [답변 원칙]
+    - 참고 자료에 근거한 내용만 답변하세요.
+    - 참고 자료에서 확인되지 않는 세부 내용은 추측하지 마세요.
+    - 절차는 가능한 한 순서대로 정리하세요.
+    - 질문과 직접 관련 없는 참고 자료는 답변에 사용하지 마세요.
+    """).strip())
     sections.append(f"[질문]\n{question}")
 
     return "\n\n".join(sections)
@@ -244,6 +286,6 @@ def build_tool_aware_system_prompt():
        -> `open_usage_prediction_page` 호출 (직접 계산 금지)
     [판단 기준 2: 도구를 사용하지 않는 경우]
     - "불용 처리 방법 알려줘", "반납 규정이 뭐야?", "물품 등록 절차는?" 등 **업무 절차, 방법, 규정**을 묻는 질문.
-    - 위와 같은 질문에서는 제공된 참고 자료(Context)와 일반적인 업무 지식을 활용해 직접 답변하세요.
+    - 위와 같은 질문에서는 도구를 호출하지 말고 RAG 검색 단계로 넘기세요.
     - 다만, 위와 같은 질문에 자산의 실시간 정보 조회나 수명 예측이 **함께** 필요한 경우에는, [판단 기준 1]에 따라 해당 목적에 맞는 도구는 병행해서 사용할 수 있습니다.
     """)
