@@ -2,6 +2,115 @@
 # RAG 서비스에서 사용하는 정적 데이터(상수, 매핑 테이블 등)를 관리하는 파일입니다.
 
 
+# ---------------------------------------------------------------------------
+# Knowledge-base category taxonomy
+# ---------------------------------------------------------------------------
+
+CATEGORY_TAXONOMY = {
+    "물품 취득 관리",
+    "물품 운용 관리",
+    "물품 반납 관리",
+    "물품 불용 관리",
+    "물품 처분 관리",
+    "물품 보유 현황",
+    "사용주기 AI 예측",
+    "AI 챗봇",
+    "FAQ",
+    "개념비교",
+    "일반",
+}
+
+CATEGORY_ALIASES = {
+    "취득": "물품 취득 관리",
+    "물품취득": "물품 취득 관리",
+    "등록": "물품 취득 관리",
+    "검수": "물품 취득 관리",
+    "운용": "물품 운용 관리",
+    "물품운용": "물품 운용 관리",
+    "운용대장": "물품 운용 관리",
+    "반납": "물품 반납 관리",
+    "반환": "물품 반납 관리",
+    "불용": "물품 불용 관리",
+    "사용중단": "물품 불용 관리",
+    "처분": "물품 처분 관리",
+    "폐기": "물품 처분 관리",
+    "매각": "물품 처분 관리",
+    "멸실": "물품 처분 관리",
+    "도난": "물품 처분 관리",
+    "보유": "물품 보유 현황",
+    "보유현황": "물품 보유 현황",
+    "보유현황조회": "물품 보유 현황",
+    "현황조회": "물품 보유 현황",
+    "사용주기": "사용주기 AI 예측",
+    "내용연수": "사용주기 AI 예측",
+    "예측": "사용주기 AI 예측",
+    "AI 예측": "사용주기 AI 예측",
+    "챗봇": "AI 챗봇",
+    "AI 챗봇": "AI 챗봇",
+    "자주묻는질문": "FAQ",
+    "faq": "FAQ",
+    "FAQ": "FAQ",
+    "차이": "개념비교",
+    "비교": "개념비교",
+    "개념비교": "개념비교",
+    "절차": "일반",
+    "식별": "일반",
+    "General": "일반",
+    "general": "일반",
+}
+
+CATEGORY_KEYWORDS = {
+    "물품 취득 관리": ("취득", "등록", "검수", "G2B", "목록번호", "고유번호"),
+    "물품 운용 관리": ("운용", "운용대장", "사용위치", "부서", "담당자"),
+    "물품 반납 관리": ("반납", "반환"),
+    "물품 불용 관리": ("불용", "사용 중단", "불용확정"),
+    "물품 처분 관리": ("처분", "폐기", "매각", "멸실", "도난"),
+    "물품 보유 현황": ("보유", "현황", "조회", "통계"),
+    "사용주기 AI 예측": ("사용주기", "내용연수", "예측", "남은수명", "AI 분석"),
+    "AI 챗봇": ("챗봇", "대화형", "질문", "답변"),
+    "개념비교": ("차이", "비교", "구분", "vs", "VS"),
+}
+
+CHAPTER_CATEGORY_MAP = {
+    "1": "물품 취득 관리",
+    "2": "물품 운용 관리",
+    "3": "물품 반납 관리",
+    "4": "물품 불용 관리",
+    "5": "물품 처분 관리",
+    "6": "물품 보유 현황",
+    "7": "사용주기 AI 예측",
+    "8": "AI 챗봇",
+}
+
+
+def normalize_category(category=None, *texts) -> str:
+    """Map generated/free-form labels onto the fixed KB taxonomy."""
+    raw_category = str(category or "").strip()
+    if raw_category in CATEGORY_TAXONOMY:
+        return raw_category
+
+    joined = " ".join(str(text or "") for text in (raw_category, *texts))
+    chapter = str(texts[0] if texts else "").strip()
+    if chapter:
+        chapter_prefix = chapter.split(".")[0]
+        if chapter_prefix in CHAPTER_CATEGORY_MAP:
+            return CHAPTER_CATEGORY_MAP[chapter_prefix]
+
+    if raw_category in CATEGORY_ALIASES:
+        return CATEGORY_ALIASES[raw_category]
+
+    compact_joined = joined.replace(" ", "")
+    for alias, normalized in CATEGORY_ALIASES.items():
+        if alias and alias.replace(" ", "") in compact_joined:
+            return normalized
+
+    for normalized, keywords in CATEGORY_KEYWORDS.items():
+        if any(keyword in joined for keyword in keywords):
+            return normalized
+
+    return "일반"
+
+
 # [메타 데이터] 동의어 사전 (User Slang -> G2B Standard)
 # 사용자가 자주 쓰는 단어(Key)를 입력하면, DB 검색용 표준 G2B목록명(Value)으로 자동 변환합니다.
 
