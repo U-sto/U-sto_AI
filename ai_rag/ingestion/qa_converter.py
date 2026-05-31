@@ -5,11 +5,12 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타입
 from typing import Dict  # 타입 힌트
 from rag.prompt import build_qa_generation_prompt, build_dataset_creation_system_prompt
-from rag.dictionaries import normalize_category
+from rag.dictionaries import normalize_category, normalize_doc_id_part
 
 # MIN_TRUNCATION_RATIO: 텍스트를 자를 때, 마침표(.)를 찾더라도
 # 전체 허용 길이의 최소 50% 이상은 유지하도록 보장하는 비율.
 MIN_TRUNCATION_RATIO = 0.5
+
 
 def _extract_json(text: str) -> Dict:
     # LLM 응답에서 JSON만 추출하는 내부 함수
@@ -94,7 +95,14 @@ def convert_to_qa(item: Dict, llm: ChatOpenAI) -> Dict:
         qa["section_path"] = item.get("section_path") or " > ".join(part for part in (str(chapter), str(title)) if part)
         qa["doc_type"] = "qa"
         base_doc_id = item.get("doc_id")
-        qa["doc_id"] = f"{base_doc_id}:qa" if base_doc_id else None
+        if base_doc_id:
+            qa["doc_id"] = f"{base_doc_id}:qa"
+        else:
+            qa["doc_id"] = (
+                f"{normalize_doc_id_part(item.get('source'))}:"
+                f"{normalize_doc_id_part(chapter)}:"
+                f"{normalize_doc_id_part(title)}:qa"
+            )
 
         # LLM이 생성한 자유 라벨은 고정 taxonomy로 정규화합니다.
         qa["category"] = normalize_category(

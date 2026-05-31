@@ -210,6 +210,7 @@ def _rrf_fuse(
 ) -> list[tuple[Document, float]]:
     dense_ranks = _rank_map(dense_results)
     keyword_ranks = _rank_map(keyword_results)
+    keyword_scores = {_doc_key(doc): score for doc, score in keyword_results}
     docs_by_key: dict[str, Document] = {}
 
     for doc, _score in keyword_results:
@@ -241,27 +242,28 @@ def _rrf_fuse(
     results = []
     for doc, fusion_score, rrf_score, boost, penalty, reasons in fused[:top_k]:
         metadata = getattr(doc, "metadata", {}) or {}
-        
-        # 1. 반드시 여기서 '먼저' 계산을 해야 합니다!
+        doc_key = _doc_key(doc)
         distance_like_score = 1 - (fusion_score / max_fusion_score)
-        
+
         metadata["_retrieval"] = {
             "method": "hybrid_rrf",
-            "dense_rank": dense_ranks.get(_doc_key(doc)),
-            "keyword_rank": keyword_ranks.get(_doc_key(doc)),
+            "dense_rank": dense_ranks.get(doc_key),
+            "keyword_rank": keyword_ranks.get(doc_key),
+            "keyword_bm25_score": round(keyword_scores[doc_key], 6) if doc_key in keyword_scores else None,
             "rrf_score": round(rrf_score, 6),
             "metadata_boost": round(boost, 6),
             "negative_hint": round(penalty, 6),
             "hints": reasons,
         }
-        
-        # 2. 위에서 계산된 값을 여기에 집어넣습니다!
+
+        if doc_key in keyword_scores:
+            metadata["keyword_bm25_score"] = round(keyword_scores[doc_key], 6)
         metadata["hybrid_rrf_score"] = round(rrf_score, 6)
         metadata["hybrid_normalized_score"] = max(distance_like_score, 0.0)
-        
+
         doc.metadata = metadata
         results.append((doc, max(distance_like_score, 0.0)))
-        
+
     return results
 
 

@@ -1,6 +1,8 @@
 # rag/dictionaries.py
 # RAG 서비스에서 사용하는 정적 데이터(상수, 매핑 테이블 등)를 관리하는 파일입니다.
 
+import re
+
 
 # ---------------------------------------------------------------------------
 # Knowledge-base category taxonomy
@@ -109,6 +111,12 @@ def normalize_category(category=None, *texts) -> str:
             return normalized
 
     return "일반"
+
+
+def normalize_doc_id_part(value) -> str:
+    """Return a stable, filesystem/log-friendly component for generated doc_id values."""
+    normalized = re.sub(r"[^0-9a-zA-Z가-힣_.-]+", "_", str(value or "").strip())
+    return normalized.strip("_") or "unknown"
 
 
 # [메타 데이터] 동의어 사전 (User Slang -> G2B Standard)

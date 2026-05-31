@@ -121,15 +121,19 @@ def _clean_question(question: str) -> str:
 def _category_slug(category: str) -> str:
     mapping = {
         "물품 취득 관리": "acquisition",
+        "물품 운용 관리": "operation",
         "절차": "operation",
         "식별": "identification",
         "물품 반납 관리": "return",
         "물품 불용 관리": "disuse",
         "물품 처분 관리": "disposal",
+        "물품 보유 현황": "holding_status",
         "보유현황조회": "holding_status",
         "사용주기 AI 예측": "usage_prediction",
         "AI 챗봇": "ai_chatbot",
         "근거 부족": "abstention",
+        "개념비교": "comparison",
+        "일반": "general",
     }
     return mapping.get(category, "category")
 
@@ -138,7 +142,6 @@ def _make_answerable_sample(
     item: dict[str, Any],
     category: str,
     index: int,
-    source_index: int,
 ) -> dict[str, Any]:
     base_question = _clean_question(item["question"])
     category_confusion_variants = CONFUSION_VARIANTS_BY_CATEGORY.get(category, ())
@@ -179,7 +182,7 @@ def build_dataset(source_items: list[dict[str, Any]], min_per_category: int) -> 
     for category, items in sorted(by_category.items()):
         for index in range(min_per_category):
             item = items[index % len(items)]
-            rows.append(_make_answerable_sample(item, category, index, source_index=len(items)))
+            rows.append(_make_answerable_sample(item, category, index))
 
     for index, question in enumerate(UNANSWERABLE_SAMPLES, start=1):
         rows.append(

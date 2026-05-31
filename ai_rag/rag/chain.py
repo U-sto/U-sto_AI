@@ -59,7 +59,6 @@ FINAL_CONTEXT_TOP_N_OPTIONS = tuple(int(value) for value in RERANK_TOP_N_OPTIONS
 MAX_FINAL_CONTEXT_N = max(FINAL_CONTEXT_TOP_N_OPTIONS) if FINAL_CONTEXT_TOP_N_OPTIONS else 10
 MAX_CONTEXT_CHARS_PER_DOC = 1400
 MIN_CONTEXT_DOCS = int(getattr(config, "MIN_CONTEXT_DOCS", 2))
-ADAPTIVE_THRESHOLD_SENTINEL = 10.0
 MIN_ADAPTIVE_SCORE_GAP = 0.08
 RAG_THRESHOLD_STRATEGY = getattr(config, "RAG_THRESHOLD_STRATEGY", "fixed")
 RAG_THRESHOLD_STRATEGIES = tuple(getattr(config, "RAG_THRESHOLD_STRATEGIES", ("fixed", "score_gap", "reranker_score")))
@@ -445,10 +444,18 @@ def _score_entry(doc, retrieval_score=None, rerank_score=None, rank: int | None 
         "doc_type": metadata.get("doc_type", "qa"),
         "retrieval_score": _safe_float(retrieval_score),
         "rerank_score": _safe_float(rerank_score),
+        "raw_dense_score": _safe_float(metadata.get("raw_dense_score")),
+        "keyword_bm25_score": _safe_float(metadata.get("keyword_bm25_score")),
+        "hybrid_normalized_score": _safe_float(metadata.get("hybrid_normalized_score")),
+        "hybrid_rrf_score": _safe_float(metadata.get("hybrid_rrf_score")),
     }
     retrieval_details = metadata.get("_retrieval")
     if isinstance(retrieval_details, dict):
         entry["retrieval_details"] = retrieval_details
+        for field in ("keyword_bm25_score", "rrf_score", "metadata_boost", "negative_hint"):
+            value = _safe_float(retrieval_details.get(field))
+            if value is not None:
+                entry[field] = value
     if metadata.get("doc_type") == "faq":
         faq_source = metadata.get("faq_source") or (
             metadata.get("source") if metadata.get("source") not in (None, "", "faq") else None
@@ -742,6 +749,9 @@ def _filter_distraction_by_intent(docs: list, query: str) -> list:
 
 def _select_diverse_docs(docs: list, max_docs: int) -> list:
     """같은 source/chapter/category 문서가 과하게 몰리지 않도록 최종 context를 고른다."""
+    if max_docs <= 0:
+        return []
+
     selected = []
     seen_doc_ids = set()
     diversity_counts: dict[str, dict[str, int]] = {
@@ -774,6 +784,28 @@ def _select_diverse_docs(docs: list, max_docs: int) -> list:
             break
 
     return selected
+
+
+def _select_final_context_docs(docs: list, top_n: int, query: str = "") -> list:
+    """관련도 상위 문서를 보호한 뒤 QA 잡음 제거, adaptive limit, diversity를 일관되게 적용한다."""
+    if not docs:
+        return []
+
+    try:
+        context_limit = max(0, int(top_n))
+    except (TypeError, ValueError):
+        context_limit = TOP_N_CONTEXT
+    if context_limit <= 0:
+        return []
+
+    protected_count = min(2, len(docs), context_limit)
+    protected_docs = docs[:protected_count]
+    remaining_docs = docs[protected_count:]
+    cleaned_docs = _drop_qa_if_enough_evidence(remaining_docs)
+    adaptive_n = _adaptive_context_limit(protected_docs + cleaned_docs, context_limit, query)
+    needed_diverse = max(0, adaptive_n - len(protected_docs))
+    final_selected = protected_docs + _select_diverse_docs(cleaned_docs, max_docs=needed_diverse)
+    return _sort_docs_for_context(final_selected)
 
 
 def _is_comparison_query(query: str) -> bool:
@@ -984,27 +1016,11 @@ def compare_retrieval_quality(
             scored_docs = filter_reranked_docs(scored_docs)
 
         score_lookup = _score_lookup(scored_docs)
-        ranked_docs = _sort_docs_for_context([doc for doc, _retrieval_score, _rerank_score in scored_docs])
+        ranked_docs = [doc for doc, _retrieval_score, _rerank_score in scored_docs]
+        ranked_docs = _focus_docs_by_category(ranked_docs, user_query)
+        ranked_docs = _filter_distraction_by_intent(ranked_docs, user_query)
         for top_n in FINAL_CONTEXT_TOP_N_OPTIONS:
-            if not ranked_docs:
-                selected_docs = []
-            else:
-                # 1. 랭킹 최상위 2개는 무조건 보호
-                protected_docs = ranked_docs[:2]
-                remaining_docs = ranked_docs[2:]
-                
-                # 2. QA 문서는 매뉴얼이 충분하면 제거 (잡음 감소)
-                cleaned_docs = _drop_qa_if_enough_evidence(remaining_docs)
-                
-                # 3. 상황에 맞게 최대 개수 조절
-                adaptive_n = _adaptive_context_limit(protected_docs + cleaned_docs, top_n)
-                
-                # 4. 다양성 선택 함수 호출 (보호된 문서 개수 제외)
-                needed_diverse_count = max(0, adaptive_n - len(protected_docs))
-                diverse_docs = _select_diverse_docs(cleaned_docs, max_docs=needed_diverse_count)
-                
-                # 5. 최종 합치기
-                selected_docs = protected_docs + diverse_docs
+            selected_docs = _select_final_context_docs(ranked_docs, top_n, user_query)
 
             selected_scores = [
                 _score_entry(
@@ -1405,23 +1421,7 @@ def run_rag_chain(
 
             focused_docs = _focus_docs_by_category(reranked_docs, user_query)
             focused_docs = _filter_distraction_by_intent(focused_docs, user_query)
-            context_ordered_docs = _sort_docs_for_context(focused_docs)
-            
-            # [리랭커 사용 O] 정렬을 맨 뒤로 뺐습니다!
-            if not focused_docs:
-                top_docs = []
-            else:
-                protected_docs = focused_docs[:2] # 관련도 최상위 2개 무조건 보호
-                remaining_docs = focused_docs[2:]
-                cleaned_docs = _drop_qa_if_enough_evidence(remaining_docs)
-                # query 파라미터 추가됨!
-                adaptive_n = _adaptive_context_limit(protected_docs + cleaned_docs, final_context_n, user_query)
-                needed_diverse = max(0, adaptive_n - len(protected_docs))
-                diverse_docs = _select_diverse_docs(cleaned_docs, max_docs=needed_diverse)
-                
-                final_selected = protected_docs + diverse_docs
-                # 다 고르고 나서 맨 마지막에 문서 타입별로 예쁘게 정렬!
-                top_docs = _sort_docs_for_context(final_selected)
+            top_docs = _select_final_context_docs(focused_docs, final_context_n, user_query)
 
             if RERANK_DEBUG:
                 logger.debug("[DEBUG] Re-ranking 후 최종 선택된 문서:")
@@ -1434,22 +1434,7 @@ def run_rag_chain(
             ordered_docs = [doc for doc, _ in filtered_docs]
             focused_docs = _focus_docs_by_category(ordered_docs, user_query)
             focused_docs = _filter_distraction_by_intent(focused_docs, user_query)
-            
-            context_ordered_docs = _sort_docs_for_context(focused_docs)
-            
-            # [리랭커 사용 X] 여기도 동일하게 적용!
-            if not focused_docs:
-                top_docs = []
-            else:
-                protected_docs = focused_docs[:2]
-                remaining_docs = focused_docs[2:]
-                cleaned_docs = _drop_qa_if_enough_evidence(remaining_docs)
-                adaptive_n = _adaptive_context_limit(protected_docs + cleaned_docs, context_n, user_query)
-                needed_diverse = max(0, adaptive_n - len(protected_docs))
-                diverse_docs = _select_diverse_docs(cleaned_docs, max_docs=needed_diverse)
-                
-                final_selected = protected_docs + diverse_docs
-                top_docs = _sort_docs_for_context(final_selected)
+            top_docs = _select_final_context_docs(focused_docs, context_n, user_query)
 
             reranked_with_scores = [
                 (doc, retrieval_score, None)

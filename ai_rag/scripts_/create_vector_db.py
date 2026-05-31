@@ -5,7 +5,6 @@ import sys
 import io
 import json
 import shutil
-import re
 import time
 import gc
 from dotenv import load_dotenv
@@ -25,16 +24,13 @@ sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
-if root_dir not in sys.path:
-    sys.path.append(root_dir)
+project_root = os.path.dirname(root_dir)
+for path in (root_dir, project_root):
+    if path not in sys.path:
+        sys.path.append(path)
 
-from rag.dictionaries import normalize_category
-
-
-def normalize_doc_id(value):
-    value = str(value or "").strip()
-    value = re.sub(r"[^0-9a-zA-Z가-힣_.-]+", "_", value)
-    return value.strip("_") or "doc"
+import app.config as config
+from rag.dictionaries import normalize_category, normalize_doc_id_part
 
 
 def stringify_value(value, indent=0):
@@ -177,7 +173,7 @@ def build_manual_documents(input_folder):
             if not content.strip():
                 continue
             section_path = derive_section_path(item)
-            doc_id = f"manual_{normalize_doc_id(file_name)}_{normalize_doc_id(chapter)}_{idx:03d}"
+            doc_id = f"manual_{normalize_doc_id_part(file_name)}_{normalize_doc_id_part(chapter)}_{idx:03d}"
             metadata = {
                 "doc_type": "manual_chunk",
                 "source": file_name,
@@ -245,13 +241,12 @@ def main():
     root_dir = os.path.dirname(current_dir)
     
     # [중요] 프로젝트 루트는 ai_rag의 상위 폴더입니다.
-    project_root = os.path.dirname(root_dir)
     target_file = os.path.join(project_root, "dataset", "qa_output", "manual_qa_final.json")
     manual_input_folder = os.path.join(project_root, "dataset", "input")
     faq_file = os.path.join(project_root, "dataset", "FAQ", "faq_data.json")
     
     # DB 저장 경로
-    DB_PATH = os.path.join(project_root, "chroma_db")
+    DB_PATH = os.path.join(project_root, config.VECTOR_DB_PATH)
 
     print("벡터 DB 생성 작업을 시작합니다...")
 
@@ -286,7 +281,7 @@ def main():
 
     # 2. 임베딩 및 DB 저장
     print("Embedding 모델을 준비 중입니다...")
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    embeddings = OpenAIEmbeddings(model=config.EMBEDDING_MODEL_NAME)
 
     # 임베딩 진행 상황 구체적 명시
     print(f"Chroma DB 저장 시작... (총 {len(documents)}개 벡터 변환, 임시 저장 위치: {temp_db_path})")
@@ -303,7 +298,13 @@ def main():
         except Exception:
             pass
 
-        vectordb._client._system.stop()
+        try:
+            chroma_client = getattr(vectordb, "_client", None)
+            chroma_system = getattr(chroma_client, "_system", None)
+            if chroma_system is not None and hasattr(chroma_system, "stop"):
+                chroma_system.stop()
+        except Exception as e:
+            print(f"경고: Chroma client 정리 중 오류가 발생했지만 DB 생성은 계속합니다: {e}")
 
         del vectordb
         gc.collect()

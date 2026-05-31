@@ -1,7 +1,6 @@
 import argparse
 import csv
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -13,13 +12,16 @@ for path in (PROJECT_ROOT, AI_RAG_ROOT):
         sys.path.insert(0, str(path))
 
 import app.config as config
+from evaluation.metrics import (
+    METRIC_K_VALUES,
+    context_precision,
+    first_relevant_rank,
+    ndcg_at_k,
+)
 from ingestion.embedder import get_embedding_model
 from langchain_openai import ChatOpenAI
 from rag.chain import compare_retrieval_quality
 from vectorstore.chroma_store import load_chroma_db
-
-
-METRIC_K_VALUES = (1, 3, 5, 10)
 
 
 def _parse_int_options(value: str) -> list[int]:
@@ -86,72 +88,6 @@ def load_questions(path: Path, limit: int | None = None) -> list[dict]:
             if limit and len(samples) >= limit:
                 return samples
     return samples
-
-
-def _relevance_grade(context: dict, sample: dict) -> int:
-    """3=exact, 2=same source/chapter, 1=same category, 0=not relevant."""
-    if sample["expected_doc_id"] and context.get("doc_id") == sample["expected_doc_id"]:
-        return 3
-
-    source_matches = (
-        bool(sample["expected_source"])
-        and context.get("source") == sample["expected_source"]
-    )
-    chapter_matches = (
-        bool(sample["expected_chapter"])
-        and context.get("chapter") == sample["expected_chapter"]
-    )
-    category_matches = (
-        bool(sample["expected_category"])
-        and context.get("category") == sample["expected_category"]
-    )
-    title_matches = (
-        bool(sample["expected_title"])
-        and context.get("title") == sample["expected_title"]
-    )
-
-    if source_matches and chapter_matches and (title_matches or not sample["expected_title"]):
-        return 3
-    if source_matches and chapter_matches:
-        return 2
-    if source_matches and not sample["expected_chapter"]:
-        return 2
-    if category_matches:
-        return 1
-    return 0
-
-
-def _is_match(context: dict, sample: dict) -> bool:
-    return _relevance_grade(context, sample) > 0
-
-
-def _first_hit_rank(contexts: list[dict], sample: dict) -> int | None:
-    for rank, context in enumerate(contexts, start=1):
-        if _is_match(context, sample):
-            return rank
-    return None
-
-
-def _dcg(grades: list[int]) -> float:
-    return sum((2**grade - 1) / math.log2(index + 2) for index, grade in enumerate(grades))
-
-
-def _ndcg_at_k(contexts: list[dict], sample: dict, k: int) -> float:
-    grades = [_relevance_grade(context, sample) for context in contexts[:k]]
-    if not grades:
-        return 0.0
-    ideal = sorted(grades, reverse=True)
-    ideal_dcg = _dcg(ideal)
-    if ideal_dcg == 0:
-        return 0.0
-    return _dcg(grades) / ideal_dcg
-
-
-def _context_precision(contexts: list[dict], sample: dict) -> float:
-    if not contexts:
-        return 0.0
-    relevant_count = sum(1 for context in contexts if _is_match(context, sample))
-    return relevant_count / len(contexts)
 
 
 def _diversity_violations(contexts: list[dict]) -> str:
@@ -221,14 +157,14 @@ def main():
                     )
                     for row in comparison_rows:
                         final_context = row["final_context"]
-                        first_hit_rank = _first_hit_rank(final_context, sample)
+                        first_hit_rank = first_relevant_rank(final_context, sample)
                         metric_values = {
                             f"recall_at_{k}": int(first_hit_rank is not None and first_hit_rank <= k)
                             for k in METRIC_K_VALUES
                         }
                         metric_values.update(
                             {
-                                f"ndcg_at_{k}": round(_ndcg_at_k(final_context, sample, k), 6)
+                                f"ndcg_at_{k}": round(ndcg_at_k(final_context, sample, k), 6)
                                 for k in METRIC_K_VALUES
                             }
                         )
@@ -254,7 +190,7 @@ def main():
                                 "first_hit_rank": first_hit_rank or "",
                                 "mrr": round(1 / first_hit_rank, 6) if first_hit_rank else 0,
                                 **metric_values,
-                                "context_precision": round(_context_precision(final_context, sample), 6),
+                                "context_precision": round(context_precision(final_context, sample), 6),
                                 "diversity_violations": _diversity_violations(final_context),
                                 "final_doc_ids": "|".join(
                                     str(item.get("doc_id", "")) for item in final_context

@@ -21,21 +21,14 @@ for path in (AI_RAG_DIR, PROJECT_ROOT):
         sys.path.insert(0, str(path))
 
 from app import config
-from evaluation.metrics import compute_metrics as compute_chain_metrics
+from evaluation.metrics import (
+    METRIC_K_VALUES,
+    compute_metrics as compute_chain_metrics,
+    first_relevant_rank,
+)
 from ingestion.embedder import get_embedding_model
 from rag.chain import run_rag_chain
 from vectorstore.chroma_store import load_chroma_db
-
-
-METRIC_K_VALUES = (1, 3, 5, 10)
-ABSTENTION_MARKERS = (
-    config.NO_CONTEXT_RESPONSE,
-    "답변드리기 어렵",
-    "문서가 부족",
-    "근거가 부족",
-    "확인할 수 없습니다",
-    "매뉴얼에 해당 내용이 없어",
-)
 
 
 def _load_samples(dataset_path: Path, limit: int | None) -> list[dict[str, Any]]:
@@ -72,93 +65,6 @@ def _doc_ids(docs: list[dict[str, Any]]) -> str:
 
 def _markdown_cell(value: Any) -> str:
     return str(value or "").replace("|", "<br>").replace("\n", " ")
-
-
-def _expected_field(sample: dict[str, Any], *names: str) -> str:
-    for name in names:
-        value = sample.get(name)
-        if value not in (None, ""):
-            return str(value)
-    return ""
-
-
-def _relevance_grade(doc: dict[str, Any], sample: dict[str, Any]) -> int:
-    """3=exact, 2=same source/chapter, 1=same category, 0=not relevant."""
-    expected_doc_id = _expected_field(sample, "expected_doc_id", "doc_id")
-    expected_source = _expected_field(sample, "expected_source", "source")
-    expected_chapter = _expected_field(sample, "expected_chapter", "chapter", "source_chapter")
-    expected_title = _expected_field(sample, "expected_title", "title", "source_title")
-    expected_category = _expected_field(sample, "expected_category", "category")
-
-    if expected_doc_id and str(doc.get("doc_id", "")) == expected_doc_id:
-        return 3
-
-    source_matches = bool(expected_source) and doc.get("source") == expected_source
-    chapter_matches = bool(expected_chapter) and doc.get("chapter") == expected_chapter
-    title_matches = bool(expected_title) and doc.get("title") == expected_title
-    category_matches = bool(expected_category) and doc.get("category") == expected_category
-
-    if source_matches and chapter_matches and (title_matches or not expected_title):
-        return 3
-    if source_matches and chapter_matches:
-        return 2
-    if category_matches:
-        return 1
-    return 0
-
-
-def _first_relevant_rank(docs: list[dict[str, Any]], sample: dict[str, Any]) -> int | None:
-    for rank, doc in enumerate(docs, start=1):
-        if _relevance_grade(doc, sample) > 0:
-            return rank
-    return None
-
-
-def _dcg(grades: list[int]) -> float:
-    return sum((2**grade - 1) / math.log2(index + 2) for index, grade in enumerate(grades))
-
-
-def _ndcg_at_k(docs: list[dict[str, Any]], sample: dict[str, Any], k: int) -> float:
-    grades = [_relevance_grade(doc, sample) for doc in docs[:k]]
-    if not grades:
-        return 0.0
-    ideal = sorted(grades, reverse=True)
-    ideal_dcg = _dcg(ideal)
-    if ideal_dcg == 0:
-        return 0.0
-    return _dcg(grades) / ideal_dcg
-
-
-def _is_abstained(answer: str, diagnostics: dict[str, Any]) -> bool:
-    if diagnostics.get("final_context_count") == 0 and diagnostics.get("classification") == "NEED_RAG":
-        return True
-    return any(marker and marker in answer for marker in ABSTENTION_MARKERS)
-
-
-def _compute_metrics(sample: dict[str, Any], diagnostics: dict[str, Any], answer: str) -> dict[str, Any]:
-    ranked_docs = diagnostics.get("reranked_scores") or diagnostics.get("retrieved_scores") or []
-    final_context = diagnostics.get("final_context_scores") or []
-    expected_abstain = bool(sample.get("expected_abstain") or sample.get("expected_answerable") is False)
-    abstained = _is_abstained(answer, diagnostics)
-
-    first_rank = _first_relevant_rank(ranked_docs, sample)
-    metrics: dict[str, Any] = {
-        "first_relevant_rank": first_rank,
-        "mrr": round(1 / first_rank, 6) if first_rank else 0.0,
-        "context_precision": round(
-            sum(1 for doc in final_context if _relevance_grade(doc, sample) > 0) / len(final_context),
-            6,
-        )
-        if final_context
-        else 0.0,
-        "expected_abstain": expected_abstain,
-        "abstained": abstained,
-        "abstention_correct": int(abstained == expected_abstain),
-    }
-    for k in METRIC_K_VALUES:
-        metrics[f"recall_at_{k}"] = int(first_rank is not None and first_rank <= k)
-        metrics[f"ndcg_at_{k}"] = round(_ndcg_at_k(ranked_docs, sample, k), 6)
-    return metrics
 
 
 def _diagnostic_record(sample: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
@@ -312,7 +218,7 @@ def _score_distribution_by_retrieval_outcome(rows: list[dict[str, Any]]) -> dict
 
         best_score = min(scores)
         expected_abstain = bool((row.get("metrics") or {}).get("expected_abstain"))
-        has_relevant_doc = _first_relevant_rank(retrieved_docs, row) is not None
+        has_relevant_doc = first_relevant_rank(retrieved_docs, row) is not None
         if expected_abstain:
             buckets["unanswerable_retrieved"].append(best_score)
         elif has_relevant_doc:
@@ -334,11 +240,11 @@ def _failure_reason(row: dict[str, Any]) -> str:
         return "expected_abstain_but_answered"
     if not expected_abstain and metrics.get("abstained"):
         return "answerable_but_abstained"
-    if not expected_abstain and _first_relevant_rank(retrieved_docs, row) is None:
+    if not expected_abstain and first_relevant_rank(retrieved_docs, row) is None:
         return "expected_doc_not_retrieved"
-    if not expected_abstain and filtered_docs and _first_relevant_rank(filtered_docs, row) is None:
+    if not expected_abstain and filtered_docs and first_relevant_rank(filtered_docs, row) is None:
         return "expected_doc_removed_by_filter"
-    if not expected_abstain and final_context and _first_relevant_rank(final_context, row) is None:
+    if not expected_abstain and final_context and first_relevant_rank(final_context, row) is None:
         return "expected_doc_missing_from_final_context"
     if not expected_abstain and float(metrics.get("context_precision", 0.0)) < 1.0:
         return "final_context_contains_irrelevant_docs"
