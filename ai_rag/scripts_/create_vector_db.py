@@ -5,7 +5,6 @@ import sys
 import io
 import json
 import shutil
-import re
 import time
 import gc
 from dotenv import load_dotenv
@@ -23,27 +22,15 @@ sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
 # ==========================================
 
-def infer_category(*texts):
-    joined = " ".join(str(text or "") for text in texts)
-    if any(keyword in joined for keyword in ["반납", "반환"]):
-        return "물품 반납 관리"
-    if any(keyword in joined for keyword in ["불용", "사용 중단"]):
-        return "물품 불용 관리"
-    if any(keyword in joined for keyword in ["처분", "폐기", "매각", "멸실", "도난"]):
-        return "물품 처분 관리"
-    if any(keyword in joined for keyword in ["취득", "등록", "검수", "G2B", "목록번호"]):
-        return "물품 취득 관리"
-    if any(keyword in joined for keyword in ["보유", "현황", "조회"]):
-        return "물품 보유 현황"
-    if any(keyword in joined for keyword in ["AI", "예측", "사용주기", "내용연수"]):
-        return "사용주기 AI 예측"
-    return "일반"
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(root_dir)
+for path in (root_dir, project_root):
+    if path not in sys.path:
+        sys.path.append(path)
 
-
-def normalize_doc_id(value):
-    value = str(value or "").strip()
-    value = re.sub(r"[^0-9a-zA-Z가-힣_.-]+", "_", value)
-    return value.strip("_") or "doc"
+import app.config as config
+from rag.dictionaries import normalize_category, normalize_doc_id_part
 
 
 def stringify_value(value, indent=0):
@@ -67,6 +54,18 @@ def stringify_value(value, indent=0):
     return str(value)
 
 
+def derive_section_path(item):
+    section_path = item.get("section_path")
+    if isinstance(section_path, list):
+        return " > ".join(str(part).strip() for part in section_path if str(part).strip())
+    if section_path:
+        return str(section_path).strip()
+
+    chapter = str(item.get("chapter", "")).strip()
+    title = str(item.get("title", "")).strip()
+    return " > ".join(part for part in (chapter, title) if part) or "root"
+
+
 def build_manual_content(item):
     priority_fields = [
         "summary",
@@ -88,6 +87,8 @@ def build_manual_content(item):
         f"문서 유형: 원문 매뉴얼",
         f"장/절: {item.get('chapter', '')}",
         f"제목: {item.get('title', '')}",
+        f"분류: {item.get('category', '')}",
+        f"섹션 경로: {derive_section_path(item)}",
         f"키워드: {', '.join(item.get('keywords', [])) if isinstance(item.get('keywords'), list) else item.get('keywords', '')}",
     ]
     for field in priority_fields:
@@ -111,13 +112,20 @@ def build_qa_documents(qa_file):
         if not q or not a:
             continue
 
-        category = item.get("category") or infer_category(q, a, item.get("title", ""))
+        category = normalize_category(
+            item.get("category"),
+            item.get("chapter", ""),
+            item.get("title", ""),
+            q,
+            a,
+        )
         content = (
             "문서 유형: QA 매칭 문서\n"
+            "역할: 사용자 질문 의도 매칭용\n"
             f"문서 주제: {category}\n"
             f"관련 메뉴: {item.get('title', '')}\n"
             f"사용자 질문: {q}\n"
-            f"상세 답변: {a}"
+            f"답변 요약: {a}"
         )
         metadata = {
             "doc_type": "qa",
@@ -125,7 +133,9 @@ def build_qa_documents(qa_file):
             "title": item.get("title", ""),
             "chapter": item.get("chapter", ""),
             "category": category,
-            "doc_id": item.get("doc_id", f"qa_{idx:04d}"),
+            "section_path": item.get("section_path") or derive_section_path(item),
+            "question": q,
+            "doc_id": item.get("doc_id") or f"qa_{idx:04d}",
         }
         documents.append(Document(page_content=content, metadata=metadata))
     return documents
@@ -151,17 +161,26 @@ def build_manual_documents(input_folder):
         for idx, item in enumerate(data):
             title = item.get("title", "")
             chapter = item.get("chapter", "")
-            category = item.get("category") or infer_category(title, item.get("summary", ""), item.get("keywords", ""))
+            category = normalize_category(
+                item.get("category"),
+                chapter,
+                title,
+                item.get("summary", ""),
+                item.get("keywords", ""),
+            )
+            item = {**item, "category": category}
             content = build_manual_content(item)
             if not content.strip():
                 continue
-            doc_id = f"manual_{normalize_doc_id(file_name)}_{normalize_doc_id(chapter)}_{idx:03d}"
+            section_path = derive_section_path(item)
+            doc_id = f"manual_{normalize_doc_id_part(file_name)}_{normalize_doc_id_part(chapter)}_{idx:03d}"
             metadata = {
                 "doc_type": "manual_chunk",
                 "source": file_name,
                 "title": title,
                 "chapter": chapter,
                 "category": category,
+                "section_path": section_path,
                 "doc_id": doc_id,
                 "chunk_index": idx,
             }
@@ -187,9 +206,12 @@ def build_faq_documents(faq_file):
         if not question or not answer:
             continue
         keywords = item.get("keywords", [])
-        category = item.get("category") or infer_category(question, answer, keywords)
+        category = normalize_category(item.get("category") or "FAQ", "FAQ", question, answer, keywords)
+        faq_source = item.get("source", "")
         content = (
             "문서 유형: FAQ\n"
+            "source=faq\n"
+            f"faq_source: {faq_source}\n"
             f"FAQ 분류: {category}\n"
             f"질문: {question}\n"
             f"답변: {answer}\n"
@@ -197,77 +219,15 @@ def build_faq_documents(faq_file):
         )
         metadata = {
             "doc_type": "faq",
-            "source": item.get("source", "faq_data.json"),
+            "source": "faq",
+            "faq_source": faq_source,
             "title": question,
             "chapter": "FAQ",
             "category": category,
-            "doc_id": item.get("id", f"faq_{idx:04d}"),
+            "section_path": "FAQ",
+            "doc_id": item.get("id") or f"faq_{idx:04d}",
         }
         documents.append(Document(page_content=content, metadata=metadata))
-    return documents
-
-
-def build_domain_guide_documents():
-    guides = [
-        {
-            "doc_id": "domain_guide_return_disuse_disposal",
-            "title": "반납, 불용, 처분 구분 가이드",
-            "category": "개념비교",
-            "keywords": "반납, 불용, 처분, 폐기, 매각, 차이, 순서",
-            "content": (
-                "반납은 사용 부서가 더 이상 사용하지 않는 물품을 관리 부서로 돌려보내는 절차입니다. "
-                "불용은 물품을 계속 사용할 수 없거나 사용할 필요가 없다고 판단하여 사용 중단을 결정하는 단계입니다. "
-                "처분은 불용 확정 이후 실제로 폐기, 매각, 멸실, 도난 등으로 자산을 정리하는 단계입니다. "
-                "일반적인 흐름은 반납 필요 발생 -> 반납 처리 -> 불용 신청/확정 -> 처분 등록/확정 순서로 이해하면 됩니다. "
-                "단, 질문이 특정 메뉴나 버튼 조작을 묻는 경우에는 해당 원문 매뉴얼의 절차를 우선 근거로 삼아야 합니다."
-            ),
-        },
-        {
-            "doc_id": "domain_guide_acquisition_approval",
-            "title": "취득 등록과 취득 확정 구분 가이드",
-            "category": "물품 취득 관리",
-            "keywords": "취득, 등록, 확정, 승인요청, 고유번호, G2B",
-            "content": (
-                "취득 등록은 신규 물품의 기본 정보와 취득 내역을 시스템에 입력하고 저장하는 단계입니다. "
-                "취득 확정은 관리자가 등록된 취득 요청을 검토해 최종 승인하는 단계입니다. "
-                "물품 고유 번호는 일반적으로 관리자의 취득 확정 이후 생성됩니다. "
-                "G2B 목록번호, G2B 목록명, 내용연수, 취득금액 등은 취득 등록 단계의 핵심 입력 또는 자동 매핑 정보입니다."
-            ),
-        },
-        {
-            "doc_id": "domain_guide_status_edit_delete",
-            "title": "승인 상태별 수정 삭제 가능 여부 가이드",
-            "category": "절차",
-            "keywords": "대기, 반려, 확정, 수정, 삭제, 승인상태",
-            "content": (
-                "취득, 반납, 불용, 처분 업무에서 수정과 삭제는 보통 승인 상태가 대기 또는 반려일 때 가능합니다. "
-                "이미 확정된 건은 일반 사용자가 임의로 수정하거나 삭제하기 어렵고 관리자 확인이 필요합니다. "
-                "질문에 특정 업무 단계가 포함되어 있으면 해당 단계의 원문 매뉴얼 절차를 우선 확인해야 합니다."
-            ),
-        },
-    ]
-
-    documents = []
-    for guide in guides:
-        content = (
-            "문서 유형: 도메인 구분 가이드\n"
-            f"제목: {guide['title']}\n"
-            f"키워드: {guide['keywords']}\n"
-            f"내용: {guide['content']}"
-        )
-        documents.append(
-            Document(
-                page_content=content,
-                metadata={
-                    "doc_type": "domain_guide",
-                    "source": "generated_domain_guides",
-                    "title": guide["title"],
-                    "chapter": "domain_guide",
-                    "category": guide["category"],
-                    "doc_id": guide["doc_id"],
-                },
-            )
-        )
     return documents
 
 def main():
@@ -281,13 +241,12 @@ def main():
     root_dir = os.path.dirname(current_dir)
     
     # [중요] 프로젝트 루트는 ai_rag의 상위 폴더입니다.
-    project_root = os.path.dirname(root_dir)
     target_file = os.path.join(project_root, "dataset", "qa_output", "manual_qa_final.json")
     manual_input_folder = os.path.join(project_root, "dataset", "input")
     faq_file = os.path.join(project_root, "dataset", "FAQ", "faq_data.json")
     
     # DB 저장 경로
-    DB_PATH = os.path.join(project_root, "chroma_db")
+    DB_PATH = os.path.join(project_root, config.VECTOR_DB_PATH)
 
     print("벡터 DB 생성 작업을 시작합니다...")
 
@@ -304,12 +263,11 @@ def main():
         qa_documents = build_qa_documents(target_file)
         manual_documents = build_manual_documents(manual_input_folder)
         faq_documents = build_faq_documents(faq_file)
-        domain_guide_documents = build_domain_guide_documents()
     except Exception as e:
         print(f"문서 변환 실패: {e}")
         sys.exit(1)
 
-    documents = qa_documents + manual_documents + faq_documents + domain_guide_documents
+    documents = qa_documents + manual_documents + faq_documents
 
     # 변환된 데이터가 하나도 없는 경우 처리
     if not documents:
@@ -319,12 +277,11 @@ def main():
     print(f"QA 문서: {len(qa_documents)}개")
     print(f"원문 매뉴얼 문서: {len(manual_documents)}개")
     print(f"FAQ 문서: {len(faq_documents)}개")
-    print(f"도메인 구분 가이드 문서: {len(domain_guide_documents)}개")
     print(f"총 {len(documents)}개의 지식을 준비했습니다.")
 
     # 2. 임베딩 및 DB 저장
     print("Embedding 모델을 준비 중입니다...")
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    embeddings = OpenAIEmbeddings(model=config.EMBEDDING_MODEL_NAME)
 
     # 임베딩 진행 상황 구체적 명시
     print(f"Chroma DB 저장 시작... (총 {len(documents)}개 벡터 변환, 임시 저장 위치: {temp_db_path})")
@@ -340,9 +297,19 @@ def main():
             vectordb.persist()
         except Exception:
             pass
+
+        try:
+            chroma_client = getattr(vectordb, "_client", None)
+            chroma_system = getattr(chroma_client, "_system", None)
+            if chroma_system is not None and hasattr(chroma_system, "stop"):
+                chroma_system.stop()
+        except Exception as e:
+            print(f"경고: Chroma client 정리 중 오류가 발생했지만 DB 생성은 계속합니다: {e}")
+
         del vectordb
         gc.collect()
-        time.sleep(1)
+        time.sleep(2)
+
     except Exception as e:
         print(f"[Fatal Error] 임베딩 및 DB 저장 중 실패: {e}")
         if os.path.exists(temp_db_path):
