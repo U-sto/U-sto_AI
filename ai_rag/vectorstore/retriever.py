@@ -22,10 +22,80 @@ DOMAIN_KEYWORD_BOOSTS = {
     "취득": ("취득", "구매", "검수"),
     "등록": ("등록", "대장등록", "물품등록"),
     "처분": ("처분", "매각", "폐기", "양여", "해체"),
-    "AI 챗봇": ("챗봇", "쳇봇", "AI 챗봇", "FAQ", "질문 예시", "답변 가능", "챗봇 기능"),
+    "AI 챗봇": (
+        "챗봇",
+        "쳇봇",
+        "AI 챗봇",
+        "AI비서",
+        "AI 비서",
+        "FAQ",
+        "질문 예시",
+        "답변 가능",
+        "챗봇 기능",
+        "상황별 챗봇",
+        "업무 절차 및 제도 설명",
+    ),
     "보유현황": ("보유현황", "보유 현황", "현황 조회", "재고", "통계"),
-    "식별": ("물품고유번호", "G2B", "목록번호", "식별번호", "분류번호"),
+    "식별": (
+        "물품고유번호",
+        "물품 고유 번호",
+        "고유번호",
+        "고유 번호",
+        "G2B",
+        "목록번호",
+        "목록 번호",
+        "식별번호",
+        "식별 번호",
+        "분류번호",
+        "분류 번호",
+        "자산번호",
+        "자산 번호",
+        "번호 부여",
+        "승인대기",
+        "승인 대기",
+        "취득확정",
+        "취득 확정",
+        "묶음수량",
+        "묶음 수량",
+    ),
+    "사용주기 AI 예측": (
+        "사용주기 AI",
+        "사용주기AI",
+        "사용주기 예측",
+        "사용 주기 예측",
+        "사용주기",
+        "사용 주기",
+        "AI 예측",
+        "예측 결과",
+        "예측지표",
+        "예측 지표",
+        "내용연수",
+        "내용 연수",
+        "잔여수명",
+        "잔여 수명",
+        "교체 주기",
+        "고장 예측",
+        "수명 예측",
+        "사용강도",
+        "사용 강도",
+        "분석결과",
+        "분석 결과",
+        "시각화",
+        "시각화 자료",
+        "하단 시각화",
+        "분석 결과 시각화",
+        "예측 결과 화면",
+        "사용주기 예측 결과",
+        "프롬프트 입력창",
+        "예측 보고서",
+    ),
     "절차": ("절차", "방법", "단계", "승인", "확정", "취소", "수정"),
+}
+
+HIGH_RISK_DOMAIN_BOOSTS = {
+    "AI 챗봇": 0.02,
+    "식별": 0.028,
+    "사용주기 AI 예측": 0.028,
 }
 
 CONFUSION_PAIRS = (
@@ -56,9 +126,28 @@ def _metadata_text(metadata: dict[str, Any]) -> str:
     return " ".join(str(metadata.get(field) or "") for field in fields)
 
 
+def _weighted_metadata_text(metadata: dict[str, Any]) -> str:
+    """BM25가 장/절, 제목, section_path 같은 구조 신호를 더 강하게 보도록 반복한다."""
+    weighted_fields = (
+        ("doc_type", 1),
+        ("source", 1),
+        ("category", 2),
+        ("chapter", 3),
+        ("title", 4),
+        ("section_path", 4),
+        ("question", 2),
+    )
+    parts: list[str] = []
+    for field, weight in weighted_fields:
+        value = str(metadata.get(field) or "").strip()
+        if value:
+            parts.extend([value] * weight)
+    return " ".join(parts)
+
+
 def _document_search_text(doc: Document) -> str:
     metadata = getattr(doc, "metadata", {}) or {}
-    return f"{_metadata_text(metadata)} {getattr(doc, 'page_content', '') or ''}"
+    return f"{_weighted_metadata_text(metadata)} {getattr(doc, 'page_content', '') or ''}"
 
 
 def _get_all_documents(vectordb, metadata_filter: dict[str, Any] | None = None) -> list[Document]:
@@ -140,7 +229,7 @@ def _exact_domain_keyword_score(query: str, doc: Document) -> float:
         return 0.0
 
     metadata = getattr(doc, "metadata", {}) or {}
-    search_text = f"{_metadata_text(metadata)} {getattr(doc, 'page_content', '') or ''}".lower()
+    search_text = f"{_weighted_metadata_text(metadata)} {getattr(doc, 'page_content', '') or ''}".lower()
     score = 0.0
     for canonical in matched:
         aliases = DOMAIN_KEYWORD_BOOSTS[canonical]
@@ -163,6 +252,9 @@ def _metadata_domain_boost(query: str, doc: Document) -> tuple[float, list[str]]
         if any(alias.lower() in metadata_text for alias in aliases):
             boost += 0.012
             reasons.append(f"metadata:{canonical}")
+            if canonical in HIGH_RISK_DOMAIN_BOOSTS:
+                boost += HIGH_RISK_DOMAIN_BOOSTS[canonical]
+                reasons.append(f"high_risk_metadata:{canonical}")
 
     if metadata.get("doc_type") == "manual_chunk" and boost:
         boost += 0.004

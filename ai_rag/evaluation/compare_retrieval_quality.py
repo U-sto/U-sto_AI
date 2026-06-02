@@ -20,7 +20,7 @@ from evaluation.metrics import (
 )
 from ingestion.embedder import get_embedding_model
 from langchain_openai import ChatOpenAI
-from rag.chain import compare_retrieval_quality
+from rag.chain import compare_retrieval_quality, refine_query
 from vectorstore.chroma_store import load_chroma_db
 
 
@@ -114,6 +114,12 @@ def main():
     parser.add_argument("--markdown-output", default=str(AI_RAG_ROOT / "results" / "retrieval_quality_compare.md"))
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--use-llm-refine", action="store_true")
+    parser.add_argument(
+        "--refine-cache-path",
+        default=str(AI_RAG_ROOT / "results" / "query_refine_cache.json"),
+        help="LLM query refinement 결과를 질문별로 캐시해 반복 실험의 API 호출을 줄입니다.",
+    )
+    parser.add_argument("--force-refine-cache", action="store_true")
     parser.add_argument("--top-k-options", default=str(config.RETRIEVER_TOP_K))
     parser.add_argument("--threshold-strategies", default=",".join(config.RAG_THRESHOLD_STRATEGIES))
     parser.add_argument("--hybrid-options", default="on,off")
@@ -136,6 +142,10 @@ def main():
         if args.use_llm_refine
         else None
     )
+    refine_cache_path = Path(args.refine_cache_path)
+    refine_cache: dict[str, str] = {}
+    if args.use_llm_refine and refine_cache_path.exists() and not args.force_refine_cache:
+        refine_cache = json.loads(refine_cache_path.read_text(encoding="utf-8"))
 
     rows = []
     total_samples = len(samples)
@@ -144,13 +154,27 @@ def main():
         print(f"[{question_no}/{total_samples}] '{sample['question']}' 평가 진행 중... ")
         
         question = sample["question"]
+        refined_query = question
+        if args.use_llm_refine:
+            cached_refined_query = refine_cache.get(question)
+            if cached_refined_query and not args.force_refine_cache:
+                refined_query = cached_refined_query
+            else:
+                refined_query = refine_query(llm, question)
+                refine_cache[question] = refined_query
+                refine_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                refine_cache_path.write_text(
+                    json.dumps(refine_cache, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
         for top_k in top_k_options:
             for threshold_strategy in threshold_strategies:
                 for use_hybrid in hybrid_options:
                     comparison_rows = compare_retrieval_quality(
                         vectordb,
                         question,
-                        llm=llm,
+                        llm=None,
+                        refined_query=refined_query,
                         retriever_top_k=top_k,
                         threshold_strategy=threshold_strategy,
                         use_hybrid=use_hybrid,
@@ -182,6 +206,9 @@ def main():
                                 "similarity_threshold": row["similarity_threshold"],
                                 "search_mode": row["search_mode"],
                                 "refined_query": row.get("refined_query", ""),
+                                "refinement_changed": int(
+                                    str(row.get("refined_query", "")).strip() != question.strip()
+                                ),
                                 "rerank_top_n": row["rerank_top_n"],
                                 "retrieved_count": row["retrieved_count"],
                                 "filtered_count": row["filtered_count"],

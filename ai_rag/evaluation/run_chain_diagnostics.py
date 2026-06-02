@@ -6,7 +6,7 @@ import json
 import math
 import os
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -299,9 +299,29 @@ def _write_failure_reports(output_dir: Path, rows: list[dict[str, Any]]) -> tupl
         "",
         f"- Failure count: {len(failures)} / {len(rows)}",
         "",
+        "## Top Failure Reasons",
+        "",
+        "| reason | count |",
+        "|---|---:|",
+    ]
+    reason_counts = Counter(row["failure_reason"] for row in failures)
+    if reason_counts:
+        for reason, count in reason_counts.most_common(10):
+            lines.append(f"| {_markdown_cell(reason)} | {count} |")
+    else:
+        lines.append("| none | 0 |")
+
+    lines.extend(
+        [
+            "",
+            "## Failure Cases",
+            "",
+        ]
+    )
+    lines.extend([
         "| eval_id | category | reason | retrieved | filtered | final_context |",
         "|---|---|---|---|---|---|",
-    ]
+    ])
     for row in failures[:100]:
         lines.append(
             "| {eval_id} | {category} | {reason} | {retrieved} | {filtered} | {final_context} |".format(
@@ -350,11 +370,20 @@ def _write_summary(path: Path, rows: list[dict[str, Any]]) -> None:
             },
         }
 
+    failure_reasons = Counter(
+        reason for row in rows if (reason := _failure_reason(row))
+    )
     summary = {
         "evaluation_mode": "production_run_rag_chain",
         "sample_count": len(rows),
         "overall": overall,
         "by_category": by_category,
+        "failure_count": sum(failure_reasons.values()),
+        "failure_reason_counts": dict(failure_reasons.most_common()),
+        "top_failure_reasons": [
+            {"reason": reason, "count": count}
+            for reason, count in failure_reasons.most_common(3)
+        ],
         "score_distribution_by_retrieval_outcome": _score_distribution_by_retrieval_outcome(rows),
         "metric_k_values": list(METRIC_K_VALUES),
     }
@@ -375,12 +404,27 @@ def _write_summary_markdown(path: Path, rows: list[dict[str, Any]], summary_json
         f"- nDCG@5: {overall.get('ndcg_at_5', 0.0):.4f}",
         f"- Context precision: {overall.get('context_precision', 0.0):.4f}",
         f"- Abstention accuracy: {overall.get('abstention_correct', 0.0):.4f}",
+        f"- Failure count: {summary.get('failure_count', 0)}",
+        "",
+        "## Top Failure Reasons",
+        "",
+        "| reason | count |",
+        "|---|---:|",
+    ]
+    top_reasons = summary.get("top_failure_reasons") or []
+    if top_reasons:
+        for item in top_reasons:
+            lines.append(f"| {_markdown_cell(item.get('reason', ''))} | {item.get('count', 0)} |")
+    else:
+        lines.append("| none | 0 |")
+
+    lines.extend([
         "",
         "## Score Distribution",
         "",
         "| bucket | count | min | p50 | p90 | max | mean |",
         "|---|---:|---:|---:|---:|---:|---:|",
-    ]
+    ])
     for bucket, values in summary["score_distribution_by_retrieval_outcome"].items():
         lines.append(
             "| {bucket} | {count} | {min} | {p50} | {p90} | {max} | {mean} |".format(
@@ -415,26 +459,41 @@ def main() -> None:
         type=Path,
         default=AI_RAG_DIR / "results" / "chain_diagnostics",
     )
+    parser.add_argument(
+        "--input-jsonl",
+        type=Path,
+        default=None,
+        help="기존 chain_diagnostics.jsonl을 다시 요약/리포트화합니다. OpenAI 호출 없이 동작합니다.",
+    )
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
 
-    load_dotenv(PROJECT_ROOT / ".env")
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is not set. Add it to .env or environment variables.")
-
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    samples = _load_samples(args.dataset_path, args.limit)
-    embeddings = get_embedding_model()
-    vectordb = load_chroma_db(embeddings=embeddings, persist_dir=str(args.vector_db_path))
-    llm = ChatOpenAI(model=config.LLM_MODEL_NAME, temperature=config.LLM_TEMPERATURE)
+    if args.input_jsonl:
+        rows = [
+            json.loads(line)
+            for line in args.input_jsonl.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if args.limit is not None:
+            rows = rows[: args.limit]
+    else:
+        load_dotenv(PROJECT_ROOT / ".env")
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError("OPENAI_API_KEY is not set. Add it to .env or environment variables.")
 
-    rows = []
-    for index, sample in enumerate(samples, start=1):
-        question = sample["question"]
-        print(f"[{index}/{len(samples)}] {sample['eval_id']} {question[:60]}")
-        result = run_rag_chain(llm, vectordb, question)
-        rows.append(_diagnostic_record(sample, result))
+        samples = _load_samples(args.dataset_path, args.limit)
+        embeddings = get_embedding_model()
+        vectordb = load_chroma_db(embeddings=embeddings, persist_dir=str(args.vector_db_path))
+        llm = ChatOpenAI(model=config.LLM_MODEL_NAME, temperature=config.LLM_TEMPERATURE)
+
+        rows = []
+        for index, sample in enumerate(samples, start=1):
+            question = sample["question"]
+            print(f"[{index}/{len(samples)}] {sample['eval_id']} {question[:60]}")
+            result = run_rag_chain(llm, vectordb, question)
+            rows.append(_diagnostic_record(sample, result))
 
     jsonl_path = args.output_dir / "chain_diagnostics.jsonl"
     csv_path = args.output_dir / "chain_diagnostics.csv"

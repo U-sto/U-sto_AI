@@ -92,6 +92,61 @@ DOMAIN_TERMS_TO_PRESERVE = (
     "물품고유번호",
     "자산번호",
 )
+PROCEDURE_TARGET_TERMS = ("반납", "불용", "처분", "취득", "등록")
+PROCEDURE_ACTION_TERMS = (
+    "확정",
+    "승인요청",
+    "승인 요청",
+    "승인취소",
+    "승인 취소",
+    "삭제",
+    "수정",
+    "조회",
+    "등록",
+    "신규",
+    "사유",
+    "유의사항",
+    "제약사항",
+    "절차",
+    "과정",
+    "방법",
+)
+
+HIGH_RISK_EVIDENCE_ALIASES = {
+    "AI 챗봇": (
+        "AI 챗봇",
+        "ai 챗봇",
+        "챗봇",
+        "쳇봇",
+        "AI비서",
+        "AI 비서",
+        "질문 예시",
+        "답변 가능",
+    ),
+    "사용주기 AI 예측": (
+        "사용주기 AI",
+        "사용주기AI",
+        "사용주기 예측",
+        "사용 주기 예측",
+        "사용주기",
+        "사용 주기",
+        "AI 예측",
+        "예측 지표",
+        "예측지표",
+        "사용강도",
+        "사용 강도",
+        "분석결과",
+        "분석 결과",
+        "시각화",
+        "시각화 자료",
+        "하단 시각화",
+        "분석 결과 시각화",
+        "예측 결과 화면",
+        "사용주기 예측 결과",
+    ),
+}
+
+HIGH_RISK_EVIDENCE_DOC_TYPES = {"manual_chunk", "faq"}
 
 
 # [최적화] 모듈 레벨 상수 정의 (서버 켜질 때 1번만 실행됨)
@@ -691,6 +746,26 @@ def _drop_qa_if_enough_evidence(docs: list) -> list:
         return evidence_docs
     return docs
 
+
+def _drop_qa_from_final_if_enough_manual(docs: list, query: str = "") -> list:
+    """최종 context에 manual_chunk가 충분하면 protected QA를 제거한다."""
+    manual_docs = [
+        doc for doc in docs
+        if getattr(doc, "metadata", {}).get("doc_type") == "manual_chunk"
+    ]
+    if len(manual_docs) < MIN_CONTEXT_DOCS:
+        return docs
+
+    if _primary_procedure_target(query):
+        return manual_docs
+
+    evidence_docs = [
+        doc for doc in docs
+        if getattr(doc, "metadata", {}).get("doc_type") in ("manual_chunk", "faq")
+    ]
+    return evidence_docs if len(evidence_docs) >= MIN_CONTEXT_DOCS else docs
+
+
 def _adaptive_context_limit(docs: list, default_top_n: int, query: str = "") -> int:
     query_str = str(query or "")
     
@@ -710,34 +785,249 @@ def _adaptive_context_limit(docs: list, default_top_n: int, query: str = "") -> 
     return default_top_n
 
 
-def _filter_distraction_by_intent(docs: list, query: str) -> list:
-    """질문에 '구분해서'가 들어간 경우, 진짜 타깃이 아닌 방해 카테고리 문서를 완전히 제거합니다."""
+def _first_target_in_text(text: str) -> str | None:
+    for target in PROCEDURE_TARGET_TERMS:
+        if target in text:
+            return target
+    return None
+
+
+def _last_target_in_text(text: str) -> str | None:
+    positions = [
+        (text.rfind(target), target)
+        for target in PROCEDURE_TARGET_TERMS
+        if target in text
+    ]
+    if not positions:
+        return None
+    return max(positions, key=lambda item: item[0])[1]
+
+
+def _primary_procedure_target(query: str) -> str | None:
+    """혼동 절차 질문에서 실제로 답해야 할 주 절차를 보수적으로 추출한다."""
     query_str = str(query or "")
-    if "구분해서" not in query_str:
-        return docs
-    
-    # 도메인 핵심 키워드들
-    targets = ["반납", "불용", "처분", "취득", "등록"]
-    true_target = None
-    
-    # "구분해서" 뒤쪽 텍스트에서 사용자가 진짜 묻고자 하는 '진짜 타깃'을 찾습니다.
-    if "구분해서" in query_str:
-        after_text = query_str.split("구분해서")[-1]
-        for t in targets:
-            if t in after_text:
-                true_target = t
-                break
-                
+    for cue in ("구분해서", "섞지 말고", "혼동하지 않도록"):
+        if cue in query_str:
+            target = _first_target_in_text(query_str.split(cue, 1)[1])
+            if target:
+                return target
+
+    for cue in ("기준으로", "관점으로"):
+        if cue in query_str:
+            target = _last_target_in_text(query_str.split(cue, 1)[0])
+            if target:
+                return target
+
+    matched_targets = [target for target in PROCEDURE_TARGET_TERMS if target in query_str]
+    has_action = any(term in query_str for term in PROCEDURE_ACTION_TERMS)
+    if has_action and len(matched_targets) == 1:
+        return matched_targets[0]
+    return None
+
+
+def _doc_intent_text(doc) -> str:
+    metadata = getattr(doc, "metadata", {}) or {}
+    fields = (
+        metadata.get("category", ""),
+        metadata.get("title", ""),
+        metadata.get("section_path", ""),
+        metadata.get("chapter", ""),
+        getattr(doc, "page_content", "") or "",
+    )
+    return " ".join(str(field) for field in fields if field)
+
+
+def _doc_metadata_intent_text(doc) -> str:
+    metadata = getattr(doc, "metadata", {}) or {}
+    fields = (
+        metadata.get("category", ""),
+        metadata.get("title", ""),
+        metadata.get("section_path", ""),
+        metadata.get("chapter", ""),
+    )
+    return " ".join(str(field) for field in fields if field)
+
+
+def _high_risk_intent_categories(query: str) -> list[str]:
+    query_text = str(query or "").lower()
+    categories = []
+    for category, aliases in HIGH_RISK_EVIDENCE_ALIASES.items():
+        if any(alias.lower() in query_text for alias in aliases):
+            categories.append(category)
+    return categories
+
+
+def _doc_matches_category(doc, category: str) -> bool:
+    metadata_text = _doc_metadata_intent_text(doc).lower()
+    aliases = HIGH_RISK_EVIDENCE_ALIASES.get(category, (category,))
+    return category.lower() in metadata_text or any(alias.lower() in metadata_text for alias in aliases)
+
+
+def _is_evidence_doc_for_category(doc, category: str) -> bool:
+    metadata = getattr(doc, "metadata", {}) or {}
+    return (
+        metadata.get("doc_type") in HIGH_RISK_EVIDENCE_DOC_TYPES
+        and _doc_matches_category(doc, category)
+    )
+
+
+def _evidence_rank(doc, query: str, category: str) -> tuple:
+    metadata = getattr(doc, "metadata", {}) or {}
+    metadata_text = _doc_metadata_intent_text(doc)
+    doc_type = metadata.get("doc_type", "qa")
+    return (
+        doc_type == "manual_chunk",
+        category in str(metadata.get("category", "")),
+        category in metadata_text,
+        _action_overlap_score(doc, query),
+        -CONTEXT_DOC_TYPE_PRIORITY.get(doc_type, 3),
+    )
+
+
+def _best_evidence_doc(docs: list, query: str, category: str, seen_doc_ids: set[str]):
+    candidates = []
+    for item in docs:
+        doc = item[0] if isinstance(item, tuple) else item
+        doc_id = _doc_key(doc)
+        if doc_id in seen_doc_ids:
+            continue
+        if _is_evidence_doc_for_category(doc, category):
+            candidates.append(doc)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda doc: _evidence_rank(doc, query, category), reverse=True)
+    return candidates[0]
+
+
+def _enforce_high_risk_evidence(
+    selected_docs: list,
+    candidate_docs: list,
+    query: str,
+    max_docs: int,
+) -> tuple[list, list[str]]:
+    """
+    AI 챗봇/사용주기 AI 예측 질문은 QA 매칭 문서만으로 답변하면 시스템 지침이나
+    QA 요약문을 근거처럼 단정하기 쉽다. 해당 카테고리의 manual_chunk/FAQ 근거를
+    최종 context에 보존하고, 후보에도 근거가 없으면 abstain하도록 비운다.
+    """
+    categories = _high_risk_intent_categories(query)
+    if not categories:
+        return selected_docs, []
+
+    all_candidates = list(selected_docs) + list(candidate_docs)
+    chosen_docs = []
+    chosen_ids: set[str] = set()
+    decisions: list[str] = []
+
+    for category in categories:
+        evidence_doc = _best_evidence_doc(all_candidates, query, category, chosen_ids)
+        if evidence_doc is None:
+            decisions.append(f"{category}:missing_evidence_abstain")
+            return [], decisions
+
+        chosen_docs.append(evidence_doc)
+        chosen_ids.add(_doc_key(evidence_doc))
+        decisions.append(f"{category}:evidence_selected")
+
+    remaining_evidence = []
+    remaining_ids: set[str] = set()
+    for item in all_candidates:
+        doc = item[0] if isinstance(item, tuple) else item
+        doc_id = _doc_key(doc)
+        if doc_id in chosen_ids or doc_id in remaining_ids:
+            continue
+        if any(_is_evidence_doc_for_category(doc, category) for category in categories):
+            remaining_evidence.append(doc)
+            remaining_ids.add(doc_id)
+
+    remaining_evidence.sort(
+        key=lambda doc: max(_evidence_rank(doc, query, category) for category in categories),
+        reverse=True,
+    )
+
+    for doc in remaining_evidence:
+        if len(chosen_docs) >= max_docs:
+            break
+        chosen_docs.append(doc)
+        chosen_ids.add(_doc_key(doc))
+
+    if len(chosen_docs) < MIN_CONTEXT_DOCS:
+        decisions.append("high_risk:min_evidence_abstain")
+        return [], decisions
+
+    decisions.append("high_risk:evidence_only_context")
+    return _sort_docs_for_context(chosen_docs[:max_docs]), decisions
+
+
+def _doc_matches_target(doc, target: str) -> bool:
+    return target in _doc_metadata_intent_text(doc)
+
+
+def _action_overlap_score(doc, query: str) -> int:
+    text = _doc_intent_text(doc)
+    return sum(1 for term in PROCEDURE_ACTION_TERMS if term in query and term in text)
+
+
+def _promote_manual_evidence(ranked_docs: list, candidate_docs: list, query: str, max_promoted: int = 2) -> list:
+    """
+    reranker가 QA/FAQ에 치우쳐도 실제 타깃 절차의 manual_chunk 근거를 최종 후보에 보존한다.
+    QA는 질문 매칭 신호이고, manual_chunk는 답변 근거라는 KB 역할 분리를 유지하기 위한 보정이다.
+    """
+    target = _primary_procedure_target(query)
+    if not target:
+        return ranked_docs
+
+    if any(
+        (getattr(doc, "metadata", {}) or {}).get("doc_type") == "manual_chunk"
+        and _doc_matches_target(doc, target)
+        for doc in ranked_docs[: max(MIN_CONTEXT_DOCS, 2)]
+    ):
+        return ranked_docs
+
+    seen_doc_ids = {_doc_key(doc) for doc in ranked_docs}
+    candidates = []
+    for item in candidate_docs:
+        doc = item[0] if isinstance(item, tuple) else item
+        metadata = getattr(doc, "metadata", {}) or {}
+        if metadata.get("doc_type") != "manual_chunk":
+            continue
+        if _doc_key(doc) in seen_doc_ids:
+            continue
+        if not _doc_matches_target(doc, target):
+            continue
+        candidates.append(doc)
+
+    if not candidates:
+        return ranked_docs
+
+    candidates.sort(
+        key=lambda doc: (
+            _action_overlap_score(doc, query),
+            target in str((getattr(doc, "metadata", {}) or {}).get("title", "")),
+            target in str((getattr(doc, "metadata", {}) or {}).get("section_path", "")),
+        ),
+        reverse=True,
+    )
+    promoted = candidates[:max_promoted]
+    promoted_ids = {_doc_key(doc) for doc in promoted}
+    remaining = [doc for doc in ranked_docs[1:] if _doc_key(doc) not in promoted_ids]
+    return ranked_docs[:1] + promoted + remaining
+
+
+def _filter_distraction_by_intent(docs: list, query: str) -> list:
+    """혼동 절차 질문에서 실제 타깃이 아닌 방해 카테고리 문서를 제거한다."""
+    true_target = _primary_procedure_target(query)
     if not true_target:
         return docs
         
-    # 진짜 타깃이 아닌 엉뚱한 카테고리 문서는 잡음이므로 과감히 필터링
     filtered = []
     for doc in docs:
-        category = str(getattr(doc, "metadata", {}).get("category", ""))
+        intent_text = _doc_metadata_intent_text(doc)
         is_distraction = False
-        for t in targets:
-            if t != true_target and t in category:
+        for target in PROCEDURE_TARGET_TERMS:
+            if target != true_target and target in intent_text and true_target not in intent_text:
                 is_distraction = True
                 break
         
@@ -805,6 +1095,7 @@ def _select_final_context_docs(docs: list, top_n: int, query: str = "") -> list:
     adaptive_n = _adaptive_context_limit(protected_docs + cleaned_docs, context_limit, query)
     needed_diverse = max(0, adaptive_n - len(protected_docs))
     final_selected = protected_docs + _select_diverse_docs(cleaned_docs, max_docs=needed_diverse)
+    final_selected = _drop_qa_from_final_if_enough_manual(final_selected, query)
     return _sort_docs_for_context(final_selected)
 
 
@@ -964,6 +1255,7 @@ def compare_retrieval_quality(
     vectordb,
     user_query: str,
     llm=None,
+    refined_query: str | None = None,
     retriever_top_k: int = RETRIEVER_TOP_K,
     threshold_strategy: str | None = None,
     use_hybrid: bool = USE_HYBRID_RETRIEVAL,
@@ -972,7 +1264,7 @@ def compare_retrieval_quality(
     원 질문 검색 / refined query 검색 / 앙상블 검색과
     RERANK_TOP_N 4, 6, 8, 10 조합을 비교할 수 있는 평가용 helper.
     """
-    refined_query = refine_query(llm, user_query) if llm is not None else user_query
+    refined_query = refined_query or (refine_query(llm, user_query) if llm is not None else user_query)
     normalized_threshold_strategy = _normalize_threshold_strategy(threshold_strategy)
     rows = []
 
@@ -1015,8 +1307,12 @@ def compare_retrieval_quality(
         if USE_RERANKING and normalized_threshold_strategy == "reranker_score":
             scored_docs = filter_reranked_docs(scored_docs)
 
-        score_lookup = _score_lookup(scored_docs)
+        score_lookup = _score_lookup(
+            [(doc, retrieval_score, None) for doc, retrieval_score in filtered_docs]
+            + scored_docs
+        )
         ranked_docs = [doc for doc, _retrieval_score, _rerank_score in scored_docs]
+        ranked_docs = _promote_manual_evidence(ranked_docs, filtered_docs, user_query)
         ranked_docs = _focus_docs_by_category(ranked_docs, user_query)
         ranked_docs = _filter_distraction_by_intent(ranked_docs, user_query)
         for top_n in FINAL_CONTEXT_TOP_N_OPTIONS:
@@ -1419,9 +1715,21 @@ def run_rag_chain(
 
             reranked_docs = [doc for doc, _retrieval_score, _rerank_score in reranked_with_scores]
 
-            focused_docs = _focus_docs_by_category(reranked_docs, user_query)
+            ranked_docs = _promote_manual_evidence(reranked_docs, filtered_docs, user_query)
+            focused_docs = _focus_docs_by_category(ranked_docs, user_query)
             focused_docs = _filter_distraction_by_intent(focused_docs, user_query)
             top_docs = _select_final_context_docs(focused_docs, final_context_n, user_query)
+            evidence_candidate_docs = (
+                focused_docs
+                + ranked_docs
+                + [doc for doc, _score in filtered_docs]
+            )
+            top_docs, high_risk_evidence_decisions = _enforce_high_risk_evidence(
+                top_docs,
+                evidence_candidate_docs,
+                user_query,
+                final_context_n,
+            )
 
             if RERANK_DEBUG:
                 logger.debug("[DEBUG] Re-ranking 후 최종 선택된 문서:")
@@ -1432,9 +1740,21 @@ def run_rag_chain(
             # Reranking 안 쓰면 상위 N개만 선택
             context_n = final_context_n
             ordered_docs = [doc for doc, _ in filtered_docs]
-            focused_docs = _focus_docs_by_category(ordered_docs, user_query)
+            ranked_docs = _promote_manual_evidence(ordered_docs, filtered_docs, user_query)
+            focused_docs = _focus_docs_by_category(ranked_docs, user_query)
             focused_docs = _filter_distraction_by_intent(focused_docs, user_query)
             top_docs = _select_final_context_docs(focused_docs, context_n, user_query)
+            evidence_candidate_docs = (
+                focused_docs
+                + ranked_docs
+                + [doc for doc, _score in filtered_docs]
+            )
+            top_docs, high_risk_evidence_decisions = _enforce_high_risk_evidence(
+                top_docs,
+                evidence_candidate_docs,
+                user_query,
+                context_n,
+            )
 
             reranked_with_scores = [
                 (doc, retrieval_score, None)
@@ -1459,6 +1779,7 @@ def run_rag_chain(
                     "filtered": _score_entries(filtered_docs, limit=25),
                     "reranked": _score_entries(reranked_with_scores, limit=MAX_FINAL_CONTEXT_N),
                     "final_context": _score_entries([(doc, None) for doc in top_docs], limit=MAX_FINAL_CONTEXT_N),
+                    "high_risk_evidence": high_risk_evidence_decisions,
                 }
             )
             answer_text = (
@@ -1485,16 +1806,16 @@ def run_rag_chain(
                     "reranked_scores": _score_entries(reranked_with_scores, limit=MAX_FINAL_CONTEXT_N),
                     "final_context_scores": _score_entries([(doc, None) for doc in top_docs], limit=MAX_FINAL_CONTEXT_N),
                     "final_context_text": "",
+                    "high_risk_evidence": high_risk_evidence_decisions,
                     "tool_result_statuses": tool_result_statuses,
                     "tool_rag_policy": "mixed_with_no_rag_context" if tool_context else None,
                 },
             }
 
-        doc_score_lookup = _score_lookup(
-            reranked_with_scores
-            if USE_RERANKING
-            else filtered_docs
-        )
+        score_source = [(doc, retrieval_score, None) for doc, retrieval_score in filtered_docs]
+        if USE_RERANKING:
+            score_source.extend(reranked_with_scores)
+        doc_score_lookup = _score_lookup(score_source)
         final_context_scores = [
             _score_entry(
                 doc,
@@ -1534,6 +1855,7 @@ def run_rag_chain(
                 "filtered": _score_entries(filtered_docs, limit=25),
                 "reranked": _score_entries(reranked_with_scores, limit=MAX_FINAL_CONTEXT_N),
                 "final_context": final_context_scores,
+                "high_risk_evidence": high_risk_evidence_decisions,
             }
         )
 
@@ -1586,6 +1908,7 @@ def run_rag_chain(
                 "reranked_scores": _score_entries(reranked_with_scores, limit=MAX_FINAL_CONTEXT_N),
                 "final_context_scores": final_context_scores,
                 "final_context_text": context,
+                "high_risk_evidence": high_risk_evidence_decisions,
                 "retrieval_log_path": str(_retrieval_log_path()),
                 "tool_result_statuses": tool_result_statuses,
                 "tool_rag_policy": "mixed_with_rag_context" if tool_context else "rag_only",
