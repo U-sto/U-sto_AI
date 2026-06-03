@@ -421,6 +421,7 @@ def _summarize_results(
     config: dict[str, Any],
 ) -> None:
     summary = {
+        "evaluation_mode": "standalone_retrieval_generation",
         "sample_count": int(len(df)),
         "faithfulness_mean": float(df["faithfulness_score"].mean()),
         "answer_relevance_mean": float(df["answer_relevance_score"].mean()),
@@ -440,6 +441,7 @@ def _summarize_results(
     lines = [
         "# LLM judge RAG evaluation summary",
         "",
+        "- Evaluation mode: standalone retrieval/generation loop, not production run_rag_chain().",
         f"- Evaluated samples: {summary['sample_count']}",
         f"- Faithfulness: {summary['faithfulness_mean']:.2f} / 5",
         f"- Answer relevance: {summary['answer_relevance_mean']:.2f} / 5",

@@ -13,6 +13,7 @@ from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
+import matplotlib.pyplot as plt
 
 
 AI_RAG_DIR = Path(__file__).resolve().parents[1]
@@ -28,7 +29,6 @@ from generate_llm_judge_eval import (
     _configure_matplotlib,
     _extract_json_object,
     _plot_hallucination_by_category,
-    _plot_metric_bars,
     _plot_score_distribution,
 )
 
@@ -181,6 +181,54 @@ def _summarize(df: pd.DataFrame, output_dir: Path, plot_paths: list[Path], confi
     (output_dir / "chain_llm_judge_summary.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def _plot_production_metric_bars(summary: dict[str, Any], output_dir: Path) -> Path:
+    faithfulness = round(float(summary["faithfulness_mean"]), 2)
+    answer_relevance = round(float(summary["answer_relevance_mean"]), 2)
+    reference_alignment = round(float(summary["reference_alignment_mean"]), 2)
+    values = [
+        faithfulness / 5 * 100,
+        answer_relevance / 5 * 100,
+        reference_alignment / 5 * 100,
+        round(float(summary["hallucination_rate"]) * 100, 1),
+    ]
+    labels = [
+        "Faithfulness",
+        "Answer relevance",
+        "Reference alignment",
+        "Hallucination rate",
+    ]
+    colors = ["#4C78A8", "#59A14F", "#F28E2B", "#E15759"]
+
+    abstention_accuracy = summary.get("abstention_accuracy")
+    if abstention_accuracy is not None:
+        values.append(float(abstention_accuracy) * 100)
+        labels.append("Abstention accuracy")
+        colors.append("#76B7B2")
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    bars = ax.bar(labels, values, color=colors)
+    ax.set_ylim(0, 105)
+    ax.set_ylabel("Score / rate (%)")
+    ax.set_title("Production Chain LLM Judge Metrics")
+    ax.grid(axis="y", alpha=0.25)
+
+    for bar, value in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            min(value + 2, 102),
+            f"{value:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=11,
+        )
+
+    fig.tight_layout()
+    output_path = output_dir / "01_llm_judge_metric_scores.png"
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+    return output_path
+
+
 def _markdown_cell(value: Any) -> str:
     return str(value or "").replace("|", "<br>").replace("\n", " ")
 
@@ -310,6 +358,53 @@ def _write_hallucination_reports(df: pd.DataFrame, output_dir: Path) -> tuple[Pa
     return csv_path, md_path
 
 
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None or pd.isna(value):
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _load_existing_results_dataframe(results_csv: Path) -> pd.DataFrame:
+    df = pd.read_csv(results_csv)
+    for column in [
+        "faithfulness_score",
+        "answer_relevance_score",
+        "reference_alignment_score",
+        "abstention_correct",
+    ]:
+        if column in df:
+            df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
+    if "hallucination" in df:
+        df["hallucination"] = df["hallucination"].map(_coerce_bool)
+    if "eval_id" in df:
+        df = df.sort_values("eval_id")
+    return df
+
+
+def _write_production_outputs(
+    df: pd.DataFrame,
+    output_dir: Path,
+    config_payload: dict[str, Any],
+) -> tuple[Path, Path, list[Path]]:
+    hallucination_csv_path, hallucination_md_path = _write_hallucination_reports(df, output_dir)
+    plot_summary = {
+        "faithfulness_mean": float(df["faithfulness_score"].mean()),
+        "answer_relevance_mean": float(df["answer_relevance_score"].mean()),
+        "reference_alignment_mean": float(df["reference_alignment_score"].mean()),
+        "hallucination_rate": float(df["hallucination"].mean()),
+        "abstention_accuracy": float(df["abstention_correct"].mean()) if "abstention_correct" in df else None,
+    }
+    plot_paths = [
+        _plot_production_metric_bars(plot_summary, output_dir),
+        _plot_score_distribution(df, output_dir),
+        _plot_hallucination_by_category(df, output_dir),
+    ]
+    _summarize(df, output_dir, plot_paths, config_payload)
+    return hallucination_csv_path, hallucination_md_path, plot_paths
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Judge production run_rag_chain() answers from chain_diagnostics.jsonl."
@@ -324,17 +419,40 @@ def main() -> None:
         type=Path,
         default=AI_RAG_DIR / "results" / "chain_llm_judge",
     )
+    parser.add_argument(
+        "--results-csv",
+        type=Path,
+        default=None,
+        help="Optional existing chain_llm_judge_results.csv. If provided, regenerate plots and summaries without calling the judge LLM.",
+    )
     parser.add_argument("--sample-size", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--judge-model", default=str(config.LLM_MODEL_NAME))
     args = parser.parse_args()
 
+    _configure_matplotlib()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.results_csv is not None:
+        df = _load_existing_results_dataframe(args.results_csv)
+        hallucination_csv_path, hallucination_md_path, _plot_paths = _write_production_outputs(
+            df,
+            args.output_dir,
+            {
+                "results_csv": str(args.results_csv),
+                "plot_only": True,
+            },
+        )
+        print(f"Wrote {hallucination_csv_path}")
+        print(f"Wrote {hallucination_md_path}")
+        print(f"Regenerated production chain LLM judge plots in {args.output_dir}")
+        print((args.output_dir / "chain_llm_judge_summary.md").read_text(encoding="utf-8"))
+        return
+
     load_dotenv(PROJECT_ROOT / ".env")
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY is not set. Add it to .env or the environment.")
 
-    _configure_matplotlib()
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     client = OpenAI()
     chain_rows = _load_chain_rows(args.input_jsonl, args.sample_size, args.seed)
 
@@ -353,23 +471,9 @@ def main() -> None:
     df = _build_dataframe(results)
     df.to_csv(args.output_dir / "chain_llm_judge_results.csv", index=False, encoding="utf-8-sig")
     df.to_json(args.output_dir / "chain_llm_judge_results.json", orient="records", force_ascii=False, indent=2)
-    hallucination_csv_path, hallucination_md_path = _write_hallucination_reports(df, args.output_dir)
-
-    plot_summary = {
-        "faithfulness_mean": float(df["faithfulness_score"].mean()),
-        "answer_relevance_mean": float(df["answer_relevance_score"].mean()),
-        "reference_alignment_mean": float(df["reference_alignment_score"].mean()),
-        "hallucination_rate": float(df["hallucination"].mean()),
-    }
-    plot_paths = [
-        _plot_metric_bars(plot_summary, args.output_dir),
-        _plot_score_distribution(df, args.output_dir),
-        _plot_hallucination_by_category(df, args.output_dir),
-    ]
-    _summarize(
+    hallucination_csv_path, hallucination_md_path, plot_paths = _write_production_outputs(
         df,
         args.output_dir,
-        plot_paths,
         {
             "input_jsonl": str(args.input_jsonl),
             "sample_size": args.sample_size,
