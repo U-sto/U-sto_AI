@@ -5,9 +5,31 @@ import json  # JSON 파싱 모듈
 import os    # 파일 경로 처리 모듈
 from typing import List, Dict  # 타입 힌트용
 
+from rag.dictionaries import normalize_category, normalize_doc_id_part
+
 # LOOKBACK_RATIO: 청크 분할 시 문맥 유지를 위해 뒤로 되돌아가는 최대 비율 (30%)
 # (이유: 너무 많이 뒤로 가면 청크 길이가 지나치게 짧아져 효율이 떨어짐)
 LOOKBACK_RATIO = 0.3
+
+
+def _derive_category(item: Dict, file_name: str) -> str:
+    category = item.get("category")
+    chapter = str(item.get("chapter", "")).strip()
+    title = str(item.get("title", "")).strip()
+    content = str(item.get("content", "")).strip()
+    return normalize_category(category, chapter, title, content, file_name)
+
+def _derive_section_path(item: Dict) -> str:
+    section_path = item.get("section_path")
+    if isinstance(section_path, list):
+        return " > ".join(str(part).strip() for part in section_path if str(part).strip())
+    if section_path:
+        return str(section_path).strip()
+
+    chapter = str(item.get("chapter", "")).strip()
+    title = str(item.get("title", "")).strip()
+    return " > ".join(part for part in (chapter, title) if part) or "root"
+
 
 # Chunking 규칙 함수 정의 (여기서 규칙을 수정합니다)
 def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
@@ -135,7 +157,7 @@ def load_json_files(folder_path: str) -> List[Dict]:
             data = json.load(f)  # JSON 로드
 
             # 각 아이템 순회
-            for item in data:
+            for item_index, item in enumerate(data):
                 origin_text = item.get("content", "") 
                 
                 # 텍스트가 비어있으면 스킵
@@ -155,10 +177,17 @@ def load_json_files(folder_path: str) -> List[Dict]:
                     new_doc["content"] = chunk          # 본문을 잘라진 조각으로 교체
                     new_doc["source"] = file_name       # 출처 기록
                     new_doc["chunk_index"] = i          # 청크 순서 기록 (0, 1, 2...)
+                    new_doc["category"] = _derive_category(item, file_name)
+                    new_doc["section_path"] = _derive_section_path(item)
+                    new_doc["doc_type"] = "manual_chunk"
                     
-                    # [피드백 반영] doc_id 추가
-                    # 형식: {파일명}{인덱스} (예: data.json0, data.json1)
-                    new_doc["doc_id"] = f"{file_name}{i}"
+                    # source/chapter/title/chunk 기준으로 안정적인 doc_id 생성
+                    file_stem = os.path.splitext(file_name)[0]
+                    chapter = normalize_doc_id_part(item.get("chapter", "unknown"))
+                    title = normalize_doc_id_part(item.get("title", "untitled"))
+                    new_doc["doc_id"] = (
+                        f"{normalize_doc_id_part(file_stem)}:{chapter}:{title}:item_{item_index}:chunk_{i}"
+                    )
 
                     documents.append(new_doc)      # 리스트에 추가
 

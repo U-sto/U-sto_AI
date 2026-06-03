@@ -5,6 +5,7 @@ import json
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import chromadb
 import matplotlib.pyplot as plt
@@ -341,6 +342,361 @@ def _plot_pipeline_funnel(config: dict, output_dir: Path) -> Path:
     return path
 
 
+def _load_jsonl_rows(path: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _row_metrics(row: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = row.get("diagnostics") or {}
+    return row.get("metrics") or diagnostics.get("metrics") or {}
+
+
+def _row_docs(row: dict[str, Any], *names: str) -> list[dict[str, Any]]:
+    diagnostics = row.get("diagnostics") or {}
+    for name in names:
+        docs = row.get(name)
+        if docs is None:
+            docs = diagnostics.get(name)
+        if isinstance(docs, list):
+            return [doc for doc in docs if isinstance(doc, dict)]
+    return []
+
+
+def _mean(values: list[float]) -> float:
+    return float(np.mean(values)) if values else 0.0
+
+
+def _production_top_k_metrics(rows: list[dict[str, Any]], ks: list[int]) -> pd.DataFrame:
+    metric_rows = []
+    for k in ks:
+        recall_values = []
+        ndcg_values = []
+        for row in rows:
+            metrics = _row_metrics(row)
+            if f"recall_at_{k}" in metrics:
+                recall_values.append(float(metrics[f"recall_at_{k}"]))
+            if f"ndcg_at_{k}" in metrics:
+                ndcg_values.append(float(metrics[f"ndcg_at_{k}"]))
+        metric_rows.append(
+            {
+                "k": k,
+                "recall_at_k": _mean(recall_values),
+                "ndcg_at_k": _mean(ndcg_values),
+            }
+        )
+    return pd.DataFrame(metric_rows)
+
+
+def _plot_production_retrieval_curve(
+    metrics: pd.DataFrame,
+    overall: dict[str, float],
+    output_dir: Path,
+) -> Path:
+    path = output_dir / "01_retrieval_consistency_at_k.png"
+    fig, ax = plt.subplots(figsize=(8.4, 4.6))
+
+    ax.plot(
+        metrics["k"],
+        metrics["recall_at_k"] * 100,
+        marker="o",
+        linewidth=2.5,
+        label="Recall@k",
+        color="#1F77B4",
+    )
+    ax.plot(
+        metrics["k"],
+        metrics["ndcg_at_k"] * 100,
+        marker="s",
+        linewidth=2.5,
+        label="nDCG@k",
+        color="#FF7F0E",
+    )
+    ax.axhline(
+        overall["mrr"] * 100,
+        linestyle="--",
+        linewidth=2.2,
+        label=f"MRR {overall['mrr'] * 100:.1f}%",
+        color="#E15759",
+    )
+    ax.axhline(
+        overall["context_precision"] * 100,
+        linestyle=":",
+        linewidth=2.8,
+        label=f"Context precision {overall['context_precision'] * 100:.1f}%",
+        color="#76B7B2",
+    )
+
+    ax.set_title(f"Production Chain Retrieval Quality by Top-k ({int(overall['sample_count'])} samples)", fontsize=14, pad=12)
+    ax.set_xlabel("Retrieved documents (k)")
+    ax.set_ylabel("Score (%)")
+    ax.set_ylim(0, 105)
+    ax.set_xticks(metrics["k"])
+    ax.grid(alpha=0.22)
+    ax.legend(loc="lower right")
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def _plot_production_context_coverage(rows: list[dict[str, Any]], output_dir: Path) -> tuple[Path, pd.DataFrame]:
+    path = output_dir / "02_knowledge_base_category_composition.png"
+    counts = Counter()
+    for row in rows:
+        for doc in _row_docs(row, "final_context_scores", "final_context"):
+            category = doc.get("category") or "Unknown"
+            counts[str(category)] += 1
+
+    items = counts.most_common(8)
+    names = [item[0] for item in items]
+    values = [item[1] for item in items]
+    category_metrics = pd.DataFrame(
+        [{"category": name, "final_context_documents": value} for name, value in items]
+    )
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.1))
+    bars = ax.barh(names, values, color="#4C78A8")
+    ax.invert_yaxis()
+    ax.set_title(f"Final Context Coverage by Category ({len(rows)} samples)", fontsize=14, pad=12)
+    ax.set_xlabel("Number of final-context documents")
+    ax.grid(axis="x", alpha=0.22)
+    ax.bar_label(bars, padding=3, fontsize=9)
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+    return path, category_metrics
+
+
+def _raw_dense_scores(docs: list[dict[str, Any]]) -> list[float]:
+    scores = []
+    for doc in docs:
+        value = doc.get("raw_dense_score")
+        if value is None:
+            continue
+        try:
+            scores.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return scores
+
+
+def _plot_production_distance_distribution(rows: list[dict[str, Any]], output_dir: Path) -> Path:
+    path = output_dir / "03_semantic_distance_distribution.png"
+    retrieved_scores = []
+    final_scores = []
+    for row in rows:
+        retrieved_scores.extend(_raw_dense_scores(_row_docs(row, "retrieved_docs", "retrieved_scores")))
+        final_scores.extend(_raw_dense_scores(_row_docs(row, "final_context_scores", "final_context")))
+
+    fig, ax = plt.subplots(figsize=(8.3, 4.8))
+    if retrieved_scores:
+        ax.hist(
+            retrieved_scores,
+            bins=28,
+            alpha=0.62,
+            label="Retrieved raw dense distance",
+            color="#F2B66D",
+        )
+    if final_scores:
+        ax.hist(
+            final_scores,
+            bins=28,
+            alpha=0.72,
+            label="Final context raw dense distance",
+            color="#59A14F",
+        )
+    ax.set_title(f"Semantic Distance Distribution ({len(rows)} production samples)", fontsize=14, pad=12)
+    ax.set_xlabel("Raw dense distance (lower is closer)")
+    ax.set_ylabel("Document count")
+    ax.grid(axis="y", alpha=0.22)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def _diagnostic_feature_row(row: dict[str, Any]) -> list[float]:
+    metrics = _row_metrics(row)
+    retrieved = _row_docs(row, "retrieved_docs", "retrieved_scores")
+    filtered = _row_docs(row, "filtered_docs", "filtered_scores")
+    reranked = _row_docs(row, "reranked_docs", "reranked_scores")
+    final_context = _row_docs(row, "final_context_scores", "final_context")
+    retrieved_dense = _raw_dense_scores(retrieved)
+    final_dense = _raw_dense_scores(final_context)
+
+    return [
+        float(metrics.get("recall_at_1", 0.0)),
+        float(metrics.get("recall_at_3", 0.0)),
+        float(metrics.get("recall_at_5", 0.0)),
+        float(metrics.get("recall_at_10", 0.0)),
+        float(metrics.get("ndcg_at_5", 0.0)),
+        float(metrics.get("ndcg_at_10", 0.0)),
+        float(metrics.get("mrr", 0.0)),
+        float(metrics.get("context_precision", 0.0)),
+        float(metrics.get("abstention_correct", 0.0)),
+        float(len(retrieved)),
+        float(len(filtered)),
+        float(len(reranked)),
+        float(len(final_context)),
+        _mean(retrieved_dense),
+        _mean(final_dense),
+    ]
+
+
+def _plot_production_diagnostics_projection(rows: list[dict[str, Any]], output_dir: Path) -> Path:
+    path = output_dir / "04_embedding_space_pca.png"
+    features = np.asarray([_diagnostic_feature_row(row) for row in rows], dtype=np.float32)
+    if len(rows) >= 2:
+        feature_std = features.std(axis=0)
+        feature_std[feature_std == 0] = 1.0
+        normalized = (features - features.mean(axis=0)) / feature_std
+        coords = PCA(n_components=2, random_state=42).fit_transform(normalized)
+    else:
+        coords = np.zeros((len(rows), 2), dtype=np.float32)
+
+    categories = np.asarray([str(row.get("category") or "Unknown") for row in rows], dtype=object)
+    unique_categories = sorted(set(categories))
+    cmap = plt.get_cmap("tab20")
+
+    fig, ax = plt.subplots(figsize=(8.0, 5.7))
+    for idx, category in enumerate(unique_categories):
+        mask = categories == category
+        ax.scatter(
+            coords[mask, 0],
+            coords[mask, 1],
+            s=34,
+            alpha=0.72,
+            label=category,
+            color=cmap(idx % 20),
+            edgecolors="white",
+            linewidths=0.35,
+        )
+
+    ax.set_title(f"2D Projection of Production RAG Diagnostics ({len(rows)} samples)", fontsize=14, pad=12)
+    ax.set_xlabel("PCA component 1")
+    ax.set_ylabel("PCA component 2")
+    ax.grid(alpha=0.18)
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False, fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def _plot_production_pipeline_funnel(rows: list[dict[str, Any]], output_dir: Path) -> tuple[Path, dict[str, float]]:
+    path = output_dir / "05_rag_pipeline_funnel.png"
+    stage_counts = {
+        "retrieved": _mean([float(len(_row_docs(row, "retrieved_docs", "retrieved_scores"))) for row in rows]),
+        "filtered": _mean([float(len(_row_docs(row, "filtered_docs", "filtered_scores"))) for row in rows]),
+        "reranked": _mean([float(len(_row_docs(row, "reranked_docs", "reranked_scores"))) for row in rows]),
+        "final_context": _mean([float(len(_row_docs(row, "final_context_scores", "final_context"))) for row in rows]),
+    }
+    labels = ["Retrieved", "Filtered", "Reranked", "Final context"]
+    values = [stage_counts["retrieved"], stage_counts["filtered"], stage_counts["reranked"], stage_counts["final_context"]]
+
+    fig, ax = plt.subplots(figsize=(8.5, 4.8))
+    bars = ax.bar(labels, values, color=["#4C78A8", "#59A14F", "#F28E2B", "#E15759"])
+    ax.set_title(f"Production RAG Context Selection Pipeline ({len(rows)} samples)", fontsize=14, pad=12)
+    ax.set_ylabel("Average documents per query")
+    ax.set_ylim(0, max(values) * 1.18 if values else 1)
+    ax.grid(axis="y", alpha=0.22)
+    ax.bar_label(bars, labels=[f"{value:.1f}" for value in values], padding=4, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+    return path, stage_counts
+
+
+def _write_production_summary(
+    output_dir: Path,
+    rows: list[dict[str, Any]],
+    metrics: pd.DataFrame,
+    category_metrics: pd.DataFrame,
+    overall: dict[str, float],
+    stage_counts: dict[str, float],
+    plot_paths: list[Path],
+    input_jsonl: Path,
+) -> None:
+    summary = {
+        "evaluation_mode": "production_run_rag_chain_panel",
+        "sample_count": len(rows),
+        "input_jsonl": str(input_jsonl),
+        "overall": overall,
+        "stage_counts": stage_counts,
+        "top_k_metrics": metrics.to_dict(orient="records"),
+        "final_context_category_counts": category_metrics.to_dict(orient="records"),
+        "plots": [str(path) for path in plot_paths],
+    }
+    (output_dir / "rag_panel_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    lines = [
+        "# Production RAG panel summary",
+        "",
+        "- Evaluation mode: production run_rag_chain() diagnostics JSONL.",
+        f"- Evaluated samples: {len(rows)}",
+        f"- Recall@1: {overall['recall_at_1'] * 100:.1f}%",
+        f"- Recall@5: {overall['recall_at_5'] * 100:.1f}%",
+        f"- MRR: {overall['mrr'] * 100:.1f}%",
+        f"- nDCG@5: {overall['ndcg_at_5'] * 100:.1f}%",
+        f"- Context precision: {overall['context_precision'] * 100:.1f}%",
+        f"- Avg final context docs: {stage_counts['final_context']:.1f}",
+        "",
+        "## Plot files",
+        *[f"- {plot_path.name}" for plot_path in plot_paths],
+    ]
+    (output_dir / "rag_panel_summary.md").write_text("\n".join(lines), encoding="utf-8")
+    metrics.to_csv(output_dir / "rag_top_k_metrics.csv", index=False, encoding="utf-8-sig")
+    category_metrics.to_csv(output_dir / "rag_category_metrics.csv", index=False, encoding="utf-8-sig")
+
+
+def _generate_production_chain_panel(input_jsonl: Path, output_dir: Path) -> list[Path]:
+    rows = _load_jsonl_rows(input_jsonl)
+    if not rows:
+        raise ValueError(f"No rows found in {input_jsonl}")
+
+    ks = [1, 3, 5, 10]
+    metrics = _production_top_k_metrics(rows, ks)
+    all_metrics = [_row_metrics(row) for row in rows]
+    overall = {
+        "sample_count": float(len(rows)),
+        "mrr": _mean([float(metric.get("mrr", 0.0)) for metric in all_metrics]),
+        "context_precision": _mean([float(metric.get("context_precision", 0.0)) for metric in all_metrics]),
+        "abstention_accuracy": _mean([float(metric.get("abstention_correct", 0.0)) for metric in all_metrics]),
+    }
+    for k in ks:
+        overall[f"recall_at_{k}"] = _mean([float(metric.get(f"recall_at_{k}", 0.0)) for metric in all_metrics])
+        overall[f"ndcg_at_{k}"] = _mean([float(metric.get(f"ndcg_at_{k}", 0.0)) for metric in all_metrics])
+
+    context_coverage_path, category_metrics = _plot_production_context_coverage(rows, output_dir)
+    pipeline_path, stage_counts = _plot_production_pipeline_funnel(rows, output_dir)
+    plot_paths = [
+        _plot_production_retrieval_curve(metrics, overall, output_dir),
+        context_coverage_path,
+        _plot_production_distance_distribution(rows, output_dir),
+        _plot_production_diagnostics_projection(rows, output_dir),
+        pipeline_path,
+    ]
+    _write_production_summary(
+        output_dir=output_dir,
+        rows=rows,
+        metrics=metrics,
+        category_metrics=category_metrics,
+        overall=overall,
+        stage_counts=stage_counts,
+        plot_paths=plot_paths,
+        input_jsonl=input_jsonl,
+    )
+    return plot_paths
+
+
 def _write_summary(
     output_dir: Path,
     metrics: pd.DataFrame,
@@ -394,10 +750,16 @@ def _write_summary(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate panel-ready RAG retrieval metrics and plots from a Chroma DB."
+        description="Generate panel-ready RAG retrieval metrics and plots."
     )
     parser.add_argument("--db-path", type=Path, default=_repo_root() / "chroma_db")
     parser.add_argument("--collection", default="langchain")
+    parser.add_argument(
+        "--input-jsonl",
+        type=Path,
+        default=None,
+        help="Optional production chain_diagnostics.jsonl. If provided, plots are generated from run_rag_chain() logs instead of Chroma embeddings.",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -407,6 +769,12 @@ def main() -> None:
 
     _configure_matplotlib()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.input_jsonl is not None:
+        plot_paths = _generate_production_chain_panel(args.input_jsonl, args.output_dir)
+        print(f"Generated {len(plot_paths)} production chain plots in {args.output_dir}")
+        print((args.output_dir / "rag_panel_summary.md").read_text(encoding="utf-8"))
+        return
 
     embeddings, _documents, metadatas = _load_chroma_embeddings(args.db_path, args.collection)
     categories = [metadata.get("category") or "Unknown" for metadata in metadatas]
