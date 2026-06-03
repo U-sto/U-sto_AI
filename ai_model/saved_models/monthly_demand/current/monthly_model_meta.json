@@ -1,0 +1,30 @@
+{
+  "model_name": "LightGBM",
+  "variant": "lgbm_gs_variant_5",
+  "run_id": "20260603_185854",
+  "features": [
+    "trend",
+    "month",
+    "month_sin",
+    "month_cos",
+    "lag_12",
+    "rolling_mean_6",
+    "rolling_std_6"
+  ],
+  "feature_set": "seasonal_7",
+  "feature_count": 7,
+  "params": {
+    "colsample_bytree": 0.8,
+    "learning_rate": 0.03,
+    "max_depth": 6,
+    "n_estimators": 500,
+    "subsample": 0.8
+  },
+  "metrics": {
+    "monthly_rmse_count": 8.024295247320932,
+    "monthly_mae_count": 5.246020634468082,
+    "monthly_smape_pct": 32.63691730473518,
+    "monthly_r2": 0.9862969671641774
+  },
+  "evaluation_note": "Recursive forecast backtest: test lags use prior predictions, not future actual counts."
+}

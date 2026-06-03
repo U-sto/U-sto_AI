@@ -1,0 +1,190 @@
+{
+  "evaluation_mode": "production_run_rag_chain",
+  "sample_count": 200,
+  "overall": {
+    "recall_at_1": 0.715,
+    "recall_at_3": 0.77,
+    "recall_at_5": 0.78,
+    "recall_at_10": 0.78,
+    "mrr": 0.743333,
+    "ndcg_at_5": 0.727197,
+    "ndcg_at_10": 0.724696,
+    "context_precision": 0.5525,
+    "abstention_correct": 0.9
+  },
+  "by_category": {
+    "AI 챗봇": {
+      "sample_count": 20,
+      "recall_at_1": 0.25,
+      "recall_at_3": 0.25,
+      "recall_at_5": 0.25,
+      "recall_at_10": 0.25,
+      "mrr": 0.25,
+      "ndcg_at_5": 0.233503,
+      "ndcg_at_10": 0.233952,
+      "context_precision": 0.13,
+      "abstention_correct": 1.0
+    },
+    "근거 부족": {
+      "sample_count": 20,
+      "recall_at_1": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "ndcg_at_10": 0.0,
+      "context_precision": 0.0,
+      "abstention_correct": 0.0
+    },
+    "물품 반납 관리": {
+      "sample_count": 20,
+      "recall_at_1": 1.0,
+      "recall_at_3": 1.0,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.949032,
+      "ndcg_at_10": 0.946618,
+      "context_precision": 0.975,
+      "abstention_correct": 1.0
+    },
+    "물품 불용 관리": {
+      "sample_count": 20,
+      "recall_at_1": 1.0,
+      "recall_at_3": 1.0,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.938929,
+      "ndcg_at_10": 0.938257,
+      "context_precision": 0.975,
+      "abstention_correct": 1.0
+    },
+    "물품 처분 관리": {
+      "sample_count": 20,
+      "recall_at_1": 0.8,
+      "recall_at_3": 1.0,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 0.9,
+      "ndcg_at_5": 0.899715,
+      "ndcg_at_10": 0.898268,
+      "context_precision": 0.8875,
+      "abstention_correct": 1.0
+    },
+    "물품 취득 관리": {
+      "sample_count": 20,
+      "recall_at_1": 1.0,
+      "recall_at_3": 1.0,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.962864,
+      "ndcg_at_10": 0.950172,
+      "context_precision": 0.93,
+      "abstention_correct": 1.0
+    },
+    "보유현황조회": {
+      "sample_count": 20,
+      "recall_at_1": 0.85,
+      "recall_at_3": 0.9,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 0.891667,
+      "ndcg_at_5": 0.915458,
+      "ndcg_at_10": 0.915458,
+      "context_precision": 0.31,
+      "abstention_correct": 1.0
+    },
+    "사용주기 AI 예측": {
+      "sample_count": 20,
+      "recall_at_1": 0.65,
+      "recall_at_3": 0.7,
+      "recall_at_5": 0.7,
+      "recall_at_10": 0.7,
+      "mrr": 0.666667,
+      "ndcg_at_5": 0.653058,
+      "ndcg_at_10": 0.649457,
+      "context_precision": 0.63,
+      "abstention_correct": 1.0
+    },
+    "식별": {
+      "sample_count": 20,
+      "recall_at_1": 0.8,
+      "recall_at_3": 0.95,
+      "recall_at_5": 0.95,
+      "recall_at_10": 0.95,
+      "mrr": 0.875,
+      "ndcg_at_5": 0.869165,
+      "ndcg_at_10": 0.869165,
+      "context_precision": 0.366667,
+      "abstention_correct": 1.0
+    },
+    "절차": {
+      "sample_count": 20,
+      "recall_at_1": 0.8,
+      "recall_at_3": 0.9,
+      "recall_at_5": 0.9,
+      "recall_at_10": 0.9,
+      "mrr": 0.85,
+      "ndcg_at_5": 0.850245,
+      "ndcg_at_10": 0.845611,
+      "context_precision": 0.320833,
+      "abstention_correct": 1.0
+    }
+  },
+  "failure_count": 115,
+  "failure_reason_counts": {
+    "final_context_contains_irrelevant_docs": 53,
+    "expected_doc_not_retrieved": 25,
+    "expected_abstain_but_answered": 20,
+    "expected_doc_missing_from_final_context": 17
+  },
+  "top_failure_reasons": [
+    {
+      "reason": "final_context_contains_irrelevant_docs",
+      "count": 53
+    },
+    {
+      "reason": "expected_doc_not_retrieved",
+      "count": 25
+    },
+    {
+      "reason": "expected_abstain_but_answered",
+      "count": 20
+    }
+  ],
+  "score_distribution_by_retrieval_outcome": {
+    "answerable_with_relevant_doc_retrieved": {
+      "count": 155,
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "max": 0.0,
+      "mean": 0.0
+    },
+    "answerable_only_wrong_docs_retrieved": {
+      "count": 6,
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "max": 0.0,
+      "mean": 0.0
+    },
+    "unanswerable_retrieved": {
+      "count": 2,
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "max": 0.0,
+      "mean": 0.0
+    }
+  },
+  "metric_k_values": [
+    1,
+    3,
+    5,
+    10
+  ]
+}
