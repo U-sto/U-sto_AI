@@ -1,7 +1,8 @@
-import os
+﻿import os
 import pandas as pd
 import numpy as np
 import random
+import math
 from datetime import datetime, timedelta
 from faker import Faker
 
@@ -21,7 +22,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data_lifecycle") # create_data/data_lifecycle
 os.makedirs(DATA_DIR, exist_ok=True)
 
-SIGMA_SCALING_FACTOR = 0.1 # 표준편차 조정 계수 (현실적 변동성 반영용)
+LIFE_VARIABILITY_FACTOR = 0.4  # 품목별 표준편차 반영 비율. 0.1은 수명이 지나치게 좁게 몰려 모델 평가가 쉬워짐.
+MIN_LIFE_YEARS = 1.0
+MAX_LIFE_CAP_FACTOR = 2.2
+SIGMA_SCALING_FACTOR = LIFE_VARIABILITY_FACTOR  # 기존 변수명을 참조하는 코드/노트북 호환용 별칭
 # ---------------------------------------------------------
 # [NEW] 현실 기반 물품별 기대 수명 통계 (평균 μ, 표준편차 σ) - 단위: 년
 # 출처: SquareTrade, ScienceDirect, Google Research, MS/OEM Guide 등
@@ -50,6 +54,33 @@ REAL_LIFETIME_STATS = {
     # [기본값]
     "default": (8.0, 2.0)      # 매칭 안되는 품목용
 }
+
+FAILURE_PRONE_KEYWORDS = [
+    "노트북", "데스크톱", "모니터", "프린터", "스캐너", "라우터", "하드디스크", "서버"
+]
+
+def sample_positive_life_years(item_name_norm: str, mu: float, sigma: float) -> float:
+    """
+    물품 수명을 양수 분포에서 샘플링한다.
+    - IT/전자 장비: 시간이 지날수록 고장 위험이 커지는 Weibull 분포
+    - 가구/시설/기타: 양수이면서 긴 꼬리를 갖는 Lognormal 분포
+    정규분포 + 강한 표준편차 축소보다 교수 평가 시 설명 가능한 합성 데이터 근거를 만들기 쉽다.
+    """
+    adjusted_sigma = max(0.25, sigma * LIFE_VARIABILITY_FACTOR)
+
+    if any(keyword in item_name_norm for keyword in FAILURE_PRONE_KEYWORDS):
+        shape = 2.4 if any(keyword in item_name_norm for keyword in ["하드디스크", "라우터", "서버"]) else 3.0
+        scale = mu / math.gamma(1 + 1 / shape)
+        sampled = np.random.weibull(shape) * scale
+    else:
+        variance = adjusted_sigma ** 2
+        log_sigma = np.sqrt(np.log1p(variance / max(mu ** 2, 1e-6)))
+        log_mu = np.log(max(mu, MIN_LIFE_YEARS)) - 0.5 * log_sigma ** 2
+        sampled = np.random.lognormal(log_mu, log_sigma)
+
+    upper_cap = max(MIN_LIFE_YEARS + 0.5, mu + 3 * max(sigma, adjusted_sigma), mu * MAX_LIFE_CAP_FACTOR)
+    return float(np.clip(sampled, MIN_LIFE_YEARS, upper_cap))
+
 # ---------------------------------------------------------
 # 반납/불용 사유 그룹 정의
 # ---------------------------------------------------------
@@ -58,8 +89,58 @@ REASONS_RETURN = ['사업종료', '잉여물품', '공용전환']
 PROBS_RETURN_REASON = [0.6, 0.15, 0.25]
 
 # 2. 불용 사유 (물리적/규정적 요인)
-# - 수명(Normal Dist)이 다했을 때 선택될 사유들
-REASONS_PHYSICAL_END = ['고장/파손', '노후화(성능저하)', '수리비용과다']
+# - 수명이 다했을 때 선택될 사유들. 활용부서부재/구형화는 행정적 반납에서 별도 생성한다.
+REASONS_PHYSICAL_END = ['고장/파손', '노후화', '성능저하', '수리비용과다', '내용연수경과', '내구연한 경과(노후화)']
+PROBS_PHYSICAL_END_REASON = [0.20, 0.25, 0.16, 0.17, 0.14, 0.08]
+
+# 3. 대학 업무 캘린더 패턴
+# - 2월/8월: 방학 및 학기 시작 전 기자재 점검으로 불용/교체 판단 증가
+# - 12월: 예산 집행 및 연말 재물조사로 처분 확정 증가
+DISUSE_REVIEW_WINDOWS = [(2, 1, 25), (8, 1, 25), (12, 1, 20)]
+DISPOSAL_EXECUTION_WINDOWS = [(2, 10, 28), (8, 10, 31), (12, 1, 24)]
+PROB_ALIGN_DISUSE_TO_ACADEMIC_CYCLE = 0.72
+PROB_ALIGN_DISPOSAL_TO_BUDGET_CYCLE = 0.78
+
+def pick_cycle_window_date(base_date, windows, max_days_ahead=180):
+    """기준일 이후 가장 가까운 대학 업무 캘린더 윈도우 안의 날짜를 고른다."""
+    base_ts = pd.to_datetime(base_date)
+    if pd.isna(base_ts):
+        return base_date
+    base_dt = datetime(base_ts.year, base_ts.month, base_ts.day)
+    if base_dt >= TODAY:
+        return TODAY
+
+    candidates = []
+    for year in [base_dt.year, base_dt.year + 1]:
+        for month, start_day, end_day in windows:
+            window_start = datetime(year, month, start_day)
+            window_end = datetime(year, month, end_day)
+            if window_end < base_dt:
+                continue
+            if window_start < base_dt <= window_end:
+                start = base_dt
+            else:
+                start = window_start
+            if start > TODAY:
+                continue
+            if (start - base_dt).days > max_days_ahead:
+                continue
+            max_day = min(window_end, TODAY)
+            if start <= max_day:
+                days_span = (max_day - start).days
+                candidates.append(start + timedelta(days=random.randint(0, max(0, days_span))))
+
+    if not candidates:
+        return base_dt
+    return min(candidates)
+
+def apply_institutional_cycle(base_date, event_type):
+    """불용/처분 이벤트에 학사 일정과 예산 집행 주기를 확률적으로 반영한다."""
+    if event_type == 'disuse' and random.random() < PROB_ALIGN_DISUSE_TO_ACADEMIC_CYCLE:
+        return pick_cycle_window_date(base_date, DISUSE_REVIEW_WINDOWS, max_days_ahead=180)
+    if event_type == 'disposal' and random.random() < PROB_ALIGN_DISPOSAL_TO_BUDGET_CYCLE:
+        return pick_cycle_window_date(base_date, DISPOSAL_EXECUTION_WINDOWS, max_days_ahead=180)
+    return pd.to_datetime(base_date).to_pydatetime()
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
@@ -83,6 +164,12 @@ DEPT_MASTER_DATA = [
     ("C360", "글로벌문화통상대학RC행정팀(ERICA)"),
     ("A351", "시설팀(ERICA)"),
     ("A320", "학생지원팀(ERICA)"),
+    ("A124", "학생지원팀(서울)"),
+    ("A125", "커리어개발팀(서울)"),
+    ("C190", "사회과학대학RC행정팀(서울)"),
+    ("C192", "자연과학대학RC행정팀(서울)"),
+    ("C182", "공과대학RC행정팀(서울)"),
+    ("C188", "인문과학대학RC행정팀(서울)"),
 ]
 
 # ---------------------------------------------------------
@@ -129,8 +216,174 @@ results = {
     'return': [],   # 반납
     'disuse': [],   # 불용
     'disposal': [], # 처분
-    'history': []   # 이력
+    'history': [],  # 이력
+    'maintenance': [] # 점검/수리
 }
+
+def derive_usage_profile(item_name, dept_name, budget_grade="MEDIUM", management_tendency=1.0):
+    """품목과 부서 특성으로 예측 시점에 알 수 있는 사용량/가동률 패턴을 만든다."""
+    item = str(item_name)
+    dept = str(dept_name)
+    budget_grade = str(budget_grade)
+    management_tendency = float(management_tendency) if pd.notna(management_tendency) else 1.0
+
+    is_it = any(k in item for k in ["노트북", "데스크톱", "모니터", "프린터", "스캐너"])
+    is_infra = any(k in item for k in ["라우터", "하드디스크", "서버", "네트워크"])
+    is_furniture = any(k in item for k in ["책상", "의자", "소파", "탁자", "보조장"])
+    is_lab_dept = any(k in dept for k in ["소프트웨어", "공학", "공과", "전산", "AI", "컴퓨터", "자연과학"])
+    is_support_dept = any(k in dept for k in ["학생지원", "시설"])
+
+    if is_infra:
+        monthly_hours = random.randint(520, 720)
+        weekly_days = random.choice([6, 7])
+        shared = 1
+        class_used = 0
+        item_factor = 1.18
+    elif is_it and is_lab_dept:
+        monthly_hours = random.randint(120, 220)
+        weekly_days = random.randint(4, 6)
+        shared = 1 if random.random() < 0.75 else 0
+        class_used = 1 if random.random() < 0.70 else 0
+        item_factor = 1.12
+    elif is_it:
+        monthly_hours = random.randint(60, 150)
+        weekly_days = random.randint(3, 5)
+        shared = 1 if random.random() < 0.35 else 0
+        class_used = 1 if random.random() < 0.20 else 0
+        item_factor = 1.00
+    elif is_furniture:
+        monthly_hours = random.randint(80, 200)
+        weekly_days = random.randint(3, 6)
+        shared = 1 if random.random() < (0.75 if is_lab_dept or is_support_dept else 0.45) else 0
+        class_used = 1 if random.random() < (0.45 if is_lab_dept else 0.20) else 0
+        item_factor = 0.95
+    else:
+        monthly_hours = random.randint(30, 120)
+        weekly_days = random.randint(2, 5)
+        shared = 1 if random.random() < 0.30 else 0
+        class_used = 1 if random.random() < 0.15 else 0
+        item_factor = 0.92
+
+    dept_factor = 1.15 if is_lab_dept else (1.05 if is_support_dept else 1.0)
+    budget_factor = {"LOW": 0.96, "MEDIUM": 1.0, "HIGH": 1.04}.get(budget_grade, 1.0)
+    shared_factor = 1.10 if shared else 1.0
+    class_factor = 1.08 if class_used else 1.0
+    hours_factor = np.clip(monthly_hours / 140.0, 0.75, 1.25)
+    usage_intensity = item_factor * dept_factor * budget_factor * shared_factor * class_factor * hours_factor
+    usage_intensity *= np.random.uniform(0.94, 1.06)
+    usage_intensity = float(np.clip(usage_intensity, 0.80, 1.35))
+
+    return {
+        "월평균사용시간": int(monthly_hours),
+        "주당사용일수": int(weekly_days),
+        "공용장비여부": int(shared),
+        "수업사용여부": int(class_used),
+        "사용강도지수": round(usage_intensity, 3),
+    }
+
+def generate_maintenance_rows(df_operation, df_disuse, df_disposal):
+    """운용 중 누적되는 점검/수리 이력을 생성한다. 기준일 또는 종료일 이후 이벤트는 만들지 않는다."""
+    maintenance_rows = []
+
+    end_date_map = {}
+    if not df_disposal.empty:
+        dp = df_disposal.copy()
+        dp["처분기준일"] = pd.to_datetime(dp["처분확정일자"].replace("", pd.NA), errors="coerce").combine_first(
+            pd.to_datetime(dp["처분일자"], errors="coerce")
+        )
+        end_date_map.update(dp.dropna(subset=["처분기준일"]).drop_duplicates("물품고유번호", keep="last").set_index("물품고유번호")["처분기준일"].to_dict())
+    if not df_disuse.empty:
+        du = df_disuse.copy()
+        du["불용기준일"] = pd.to_datetime(du["불용확정일자"].replace("", pd.NA), errors="coerce").combine_first(
+            pd.to_datetime(du["불용일자"], errors="coerce")
+        )
+        for asset_id, end_dt in du.dropna(subset=["불용기준일"]).drop_duplicates("물품고유번호", keep="last").set_index("물품고유번호")["불용기준일"].to_dict().items():
+            end_date_map.setdefault(asset_id, end_dt)
+
+    for row in df_operation.itertuples():
+        asset_id = row.물품고유번호
+        acq_date = pd.to_datetime(row.취득일자, errors="coerce")
+        if pd.isna(acq_date):
+            continue
+        end_date = pd.to_datetime(end_date_map.get(asset_id, TODAY), errors="coerce")
+        if pd.isna(end_date) or end_date <= acq_date + pd.Timedelta(days=90):
+            continue
+
+        item_name = str(row.G2B_목록명)
+        usage_intensity = float(getattr(row, "사용강도지수", 1.0))
+        management_tendency = float(getattr(row, "부서관리성향", 1.0))
+        content_life = max(float(getattr(row, "내용연수", 5) or 5), 1.0)
+        price = max(float(getattr(row, "취득금액", 0) or 0), 1.0)
+        age_years = max((end_date - acq_date).days / 365.0, 0.1)
+
+        is_failure_prone = any(k in item_name for k in FAILURE_PRONE_KEYWORDS)
+        base_issue_rate = 0.24 if is_failure_prone else 0.10
+        if "서버" in item_name or "네트워크" in item_name:
+            base_issue_rate = 0.30
+        if any(k in item_name for k in ["책상", "의자", "소파", "탁자"]):
+            base_issue_rate = 0.07
+
+        regular_expected = min(8, age_years / 2.2 * np.clip(management_tendency, 0.85, 1.15))
+        age_pressure = 0.75 + min(age_years / content_life, 1.8) * 0.45
+        issue_expected = min(7, age_years * base_issue_rate * np.clip(usage_intensity, 0.75, 1.35) * age_pressure)
+
+        regular_count = np.random.poisson(max(0.0, regular_expected))
+        issue_count = np.random.poisson(max(0.0, issue_expected))
+        total_count = int(min(12, regular_count + issue_count))
+        if total_count == 0:
+            continue
+
+        possible_start = acq_date + pd.Timedelta(days=90)
+        possible_days = max((end_date - possible_start).days, 1)
+        event_offsets = sorted(random.sample(range(possible_days), k=min(total_count, possible_days)))
+
+        for offset in event_offsets:
+            event_date = possible_start + pd.Timedelta(days=int(offset))
+            life_ratio = np.clip((event_date - acq_date).days / (content_life * 365.0), 0, 1.8)
+            is_regular = random.random() < max(0.20, 0.72 - life_ratio * 0.28)
+
+            if is_regular:
+                event_type = "정기점검"
+                severity = 0 if random.random() < 0.75 else 1
+                result = "정상" if severity == 0 else "경미수리"
+            else:
+                severity_probs = [0.10, 0.48, 0.32, 0.10] if life_ratio < 1.0 else [0.05, 0.30, 0.45, 0.20]
+                severity = int(np.random.choice([0, 1, 2, 3], p=severity_probs))
+                if severity <= 1:
+                    event_type = "장애점검"
+                    result = "경미수리"
+                elif severity == 2:
+                    event_type = "수리"
+                    result = "주요수리"
+                else:
+                    event_type = "부품교체"
+                    result = "교체권고" if life_ratio >= 0.95 and random.random() < 0.45 else "주요수리"
+
+            if result == "정상":
+                cost = 0
+            elif result == "경미수리":
+                cost = int(price * random.uniform(0.01, 0.03))
+            elif result == "주요수리":
+                cost = int(price * random.uniform(0.05, 0.12))
+            else:
+                cost = int(price * random.uniform(0.08, 0.18))
+            cost = min(cost, int(price * 0.30))
+            cost = (cost // 1000) * 1000
+
+            maintenance_rows.append({
+                "점검수리일자": event_date.strftime("%Y-%m-%d"),
+                "물품고유번호": asset_id,
+                "G2B_목록번호": row.G2B_목록번호,
+                "G2B_목록명": item_name,
+                "운용부서": getattr(row, "운용부서", ""),
+                "점검수리구분": event_type,
+                "처리결과": result,
+                "수리비용": cost,
+                "장애심각도": severity,
+                "비고": f"{item_name} {event_type}"
+            })
+
+    return pd.DataFrame(maintenance_rows)
 # [Professor Fix 3 + User Requirement] 자산 ID 생성 방식 개선 (하이브리드)
 # 기존 포맷(M+연도+시퀀스)을 유지하되, 정렬 기준을 고정하여 재현성 확보
 def create_asset_ids(df: pd.DataFrame) -> pd.Series:
@@ -175,11 +428,19 @@ def create_asset_ids(df: pd.DataFrame) -> pd.Series:
     # 6. 원래 순서대로 정렬하여 ID 시리즈 반환
     return df_temp['asset_id'].sort_index()
 
+def normalize_history_timestamp(value):
+    dt = pd.to_datetime(value, errors='coerce')
+    if pd.isna(dt):
+        return ''
+    return pd.Timestamp(dt).strftime('%Y-%m-%d %H:%M:%S')
+
+
 def add_history(asset_id, date_str, prev_stat, curr_stat, reason, user_tuple=STAFF_USER):
     """이력 추가 헬퍼 함수"""
+    change_ts = normalize_history_timestamp(date_str)
     results['history'].append({
         '물품고유번호': asset_id,
-        '변경일자': date_str,
+        '변경일자': change_ts,
         '(이전)운용상태': prev_stat,
         '(변경)운용상태': curr_stat,
         '사유': reason,
@@ -352,6 +613,7 @@ def step_determine_event(ctx):
     # 실제 발생일은 시뮬레이션 커서(sim_date)보다 과거로 가지 않도록 보정
     if eol_date <= TODAY:
         eol_event_date = max(sim_date, eol_date)
+        eol_event_date = apply_institutional_cycle(eol_event_date, 'disuse')
         candidates.append(('불용신청', eol_event_date))
 
     # -----------------------------------------------------------
@@ -428,7 +690,7 @@ def step_process_return(ctx, event_date):
     if reason == '잉여물품':
         condition = '신품'
     elif reason == '사업종료':
-        condition = np.random.choice(['신품', '중고품','정비필요품'], p=[0.4, 0.5, 0.1])
+        condition = np.random.choice(['신품', '중고품','요정비품'], p=[0.4, 0.5, 0.1])
     elif reason == '공용전환':
         condition = np.random.choice(['신품', '중고품'], p=[0.3, 0.7])
     
@@ -503,17 +765,17 @@ def step_process_disuse(ctx, trigger_event, inherited_reason=None):
     # 1. 불용 사유 및 상태 결정    
     if trigger_event == '불용신청':
         # [NEW] 현실 수명이 다해서 오는 경우 -> 물리적 사유 선택
-        reason = random.choice(REASONS_PHYSICAL_END)
-        condition = '폐품' if reason in ['고장/파손'] else '불용품'
+        reason = np.random.choice(REASONS_PHYSICAL_END, p=PROBS_PHYSICAL_END_REASON)
+        condition = '폐품' # 모든 불용 상태는 폐품으로 통일
         prev_stat = '운용' # 반납 거치지 않고 바로 옴
         
     elif trigger_event == '불용진행':
         # 반납 후 불용으로 넘어오는 경우 (사유 상속 또는 매핑)
         # 사유: 활용부서 부재, 구형화 등
-        if inherited_reason in ['잉여물품', '사업종료']:
+        if inherited_reason in ['잉여물품', '사업종료','공용전환']:
             reason = np.random.choice(['활용부서부재', '구형화'], p =[0.7, 0.3])
-        else:
-            reason = inherited_reason # 공용전환 등
+        # else:
+        #     reason = inherited_reason # 공용전환 등
             
         condition = ctx['curr_condition']
         prev_stat = '반납'
@@ -524,11 +786,12 @@ def step_process_disuse(ctx, trigger_event, inherited_reason=None):
 
     else:
         reason = '기타'
-        condition = '불용품'
+        condition = '폐품'
         prev_stat = '운용'
     
     # 2. 불용 승인 처리
     du_date = ctx['sim_cursor_date'] + timedelta(days=random.randint(1, 14))
+    du_date = apply_institutional_cycle(du_date, 'disuse')
     if du_date > TODAY: du_date = TODAY
 
     status, confirm_date, req_date = get_approval_status_and_date(
@@ -574,6 +837,7 @@ def step_process_disuse(ctx, trigger_event, inherited_reason=None):
 def step_process_disposal(ctx, condition, disuse_reason):
     """C-3. 처분 처리"""
     dp_date = ctx['sim_cursor_date'] + timedelta(days=random.randint(1, 14))
+    dp_date = apply_institutional_cycle(dp_date, 'disposal')
     if dp_date > TODAY: dp_date = TODAY
 
     # 처분 방식
@@ -629,6 +893,40 @@ df_operation['출력상태'] = np.random.choice(
 # [수정] 초기 운용확정일자는 취득 정리일자와 동일하게 설정
 df_operation['운용확정일자'] = df_operation['정리일자'].fillna(df_operation['취득일자'])
 
+# Phase 1 보강 컬럼이 없는 과거 데이터로 실행해도 깨지지 않도록 기본값을 보강한다.
+enhancement_defaults = {
+    '구매배치ID': '',
+    '구매배치수량': 1,
+    '대량구매여부': 0,
+    '부서예산등급': 'MEDIUM',
+    '부서교체성향': 1.0,
+    '부서관리성향': 1.0,
+}
+for col, default in enhancement_defaults.items():
+    if col not in df_operation.columns:
+        df_operation[col] = default
+
+missing_batch_mask = df_operation['구매배치ID'].isna() | (df_operation['구매배치ID'].astype(str).str.strip() == '')
+df_operation.loc[missing_batch_mask, '구매배치ID'] = (
+    'B' + pd.to_datetime(df_operation.loc[missing_batch_mask, '취득일자'], errors='coerce').dt.year.fillna(TODAY.year).astype(int).astype(str)
+    + df_operation.loc[missing_batch_mask, '물품고유번호'].astype(str).str[-5:]
+)
+df_operation['구매배치수량'] = pd.to_numeric(df_operation['구매배치수량'], errors='coerce').fillna(1).astype(int)
+df_operation['대량구매여부'] = pd.to_numeric(df_operation['대량구매여부'], errors='coerce').fillna(0).astype(int)
+df_operation['부서교체성향'] = pd.to_numeric(df_operation['부서교체성향'], errors='coerce').fillna(1.0)
+df_operation['부서관리성향'] = pd.to_numeric(df_operation['부서관리성향'], errors='coerce').fillna(1.0)
+
+usage_profiles = df_operation.apply(
+    lambda r: pd.Series(derive_usage_profile(
+        r['G2B_목록명'],
+        r['운용부서'],
+        r.get('부서예산등급', 'MEDIUM'),
+        r.get('부서관리성향', 1.0),
+    )),
+    axis=1
+)
+df_operation = pd.concat([df_operation, usage_profiles], axis=1)
+
 print("⏳ [Phase 2] 자산 생애주기 시뮬레이션 시작 (운용 Loop)...")
 
 for row in df_operation.itertuples():
@@ -655,9 +953,9 @@ for row in df_operation.itertuples():
             mu, sigma = REAL_LIFETIME_STATS[key]
             break
             
-    # [NEW] 2. 정규분포(Normal Distribution)에서 샘플링 및 AI용 패턴 부여
-    # - mu(평균)와 sigma(표준편차)를 이용해 기본 랜덤 수명 생성
-    base_life_years = max(1.0, np.random.normal(mu, sigma * SIGMA_SCALING_FACTOR))
+    # [NEW] 2. 양수 수명 분포에서 샘플링 및 AI용 패턴 부여
+    # - 품목군에 따라 Weibull/Lognormal 분포를 사용해 현실적인 변동성과 긴 꼬리를 반영
+    base_life_years = sample_positive_life_years(target_name_norm, mu, sigma)
     
     # ---------------------------------------------------------
     # [NEW] 3. 데이터 패턴 부여: AI 모델 학습을 위한 가중치 적용 
@@ -693,12 +991,29 @@ for row in df_operation.itertuples():
     else:
         price_factor = 1.0   # 일반 장비
         
-    # 최종 수명 확정 = 기본수명 * (1 / 가혹도) * 가격보정
+    # 3) 관리상태/운용환경의 관측되지 않는 차이를 작게 반영
+    maintenance_factor = np.random.choice([0.9, 1.0, 1.08], p=[0.15, 0.70, 0.15])
+    random_usage_jitter = np.random.uniform(0.92, 1.08)
+
+    # 최종 수명 확정 = 기본수명 * (1 / 가혹도) * (1 / 사용강도) * 가격/관리/정책 보정
     # [Copilot 반영] severity_factor 대신 severity_divisor 사용
-    assigned_life_years = base_life_years * (1.0 / severity_divisor) * price_factor
+    usage_divisor = float(np.clip(getattr(row, '사용강도지수', 1.0), 0.90, 1.25))
+    dept_management_factor = float(np.clip(getattr(row, '부서관리성향', 1.0), 0.90, 1.10))
+    replacement_tendency = float(np.clip(getattr(row, '부서교체성향', 1.0), 0.90, 1.15))
+    policy_divisor = float(np.clip(1.0 + ((replacement_tendency - 1.0) * 0.5), 0.95, 1.08))
+    assigned_life_years = (
+        base_life_years
+        * (1.0 / severity_divisor)
+        * (1.0 / usage_divisor)
+        * price_factor
+        * maintenance_factor
+        * dept_management_factor
+        * random_usage_jitter
+        * (1.0 / policy_divisor)
+    )
     
     # [Copilot 반영] 최소 수명 방어선을 0.5년에서 현실적인 1.0년(1년)으로 상향
-    assigned_life_years = max(1.0, assigned_life_years) 
+    assigned_life_years = max(MIN_LIFE_YEARS, assigned_life_years) 
     
     # 일(Day) 단위로 변환
     assigned_limit_days = int(assigned_life_years * 365)
@@ -751,6 +1066,7 @@ for row in df_operation.itertuples():
             # 내용연수 6년 + 알파 시점에 불용
             life_years = 6
             disuse_date = acq_dt + timedelta(days=365*life_years + random.randint(0, 60))
+            disuse_date = apply_institutional_cycle(disuse_date, 'disuse')
             
             # 불용 리스트 추가
             disuse_reason = '내구연한 경과(노후화)'
@@ -773,6 +1089,7 @@ for row in df_operation.itertuples():
 
             # 처분 (매각)
             disposal_date = disuse_date + timedelta(days=random.randint(30, 90))
+            disposal_date = apply_institutional_cycle(disposal_date, 'disposal')
             if disposal_date > TODAY: disposal_date = TODAY # 미래 방지
 
             results['disposal'].append({
@@ -886,10 +1203,20 @@ df_return = pd.DataFrame(results['return'], columns=COLS_RETURN)
 df_disuse = pd.DataFrame(results['disuse'], columns=COLS_DISUSE)
 df_disposal = pd.DataFrame(results['disposal'], columns=COLS_DISPOSAL)
 df_history = pd.DataFrame(results['history'], columns=COLS_HISTORY)
+df_maintenance = generate_maintenance_rows(df_operation, df_disuse, df_disposal)
+
+COLS_MAINTENANCE = [
+    '점검수리일자', '물품고유번호', 'G2B_목록번호', 'G2B_목록명', '운용부서',
+    '점검수리구분', '처리결과', '수리비용', '장애심각도', '비고'
+]
+df_maintenance = df_maintenance.reindex(columns=COLS_MAINTENANCE)
 
 cols_operation = [
     'G2B_목록번호', 'G2B_목록명', '물품고유번호', '캠퍼스','취득일자', '취득금액', '정리일자', 
-    '운용부서', '운용상태', '내용연수', '출력상태', '승인상태', '취득정리구분', '운용부서코드', '비고', '운용확정일자'
+    '운용부서', '운용상태', '내용연수', '출력상태', '승인상태', '취득정리구분', '운용부서코드',
+    '구매배치ID', '구매배치수량', '대량구매여부', '부서예산등급', '부서교체성향', '부서관리성향',
+    '월평균사용시간', '주당사용일수', '공용장비여부', '수업사용여부', '사용강도지수',
+    '비고', '운용확정일자'
 ]
 
 # 1. 비고 등 원본 데이터 병합
@@ -911,6 +1238,7 @@ df_operation[cols_operation].to_csv(os.path.join(DATA_DIR, '04_01_operation_mast
 
 df_op_req.to_csv(os.path.join(DATA_DIR, '04_02_operation_transfer_list.csv'), index=False, encoding='utf-8-sig')
 df_return.to_csv(os.path.join(DATA_DIR, '04_03_return_list.csv'), index=False, encoding='utf-8-sig')
+df_maintenance.to_csv(os.path.join(DATA_DIR, '04_04_maintenance_list.csv'), index=False, encoding='utf-8-sig')
 df_disuse.to_csv(os.path.join(DATA_DIR, '05_01_disuse_list.csv'), index=False, encoding='utf-8-sig')
 df_disposal.to_csv(os.path.join(DATA_DIR, '06_01_disposal_list.csv'), index=False, encoding='utf-8-sig')
 df_history.to_csv(os.path.join(DATA_DIR, '99_asset_status_history.csv'), index=False, encoding='utf-8-sig')
@@ -926,6 +1254,7 @@ for status, count in current_status_counts.items():
 
 # 참고용으로 총 이력 건수만 한 줄로 표시
 print(f"\n   (참고: 생성된 전체 상태 변경 이력 로그는 총 {len(df_history)}건 입니다.)")
+print(f"   (참고: 생성된 점검/수리 이력은 총 {len(df_maintenance)}건 입니다.)")
 
 # [NEW] 물품별 수량 통계 출력 (Phase 2 결과 기준)
 print("\n📦 물품별 보유 수량 (상위 22개):")

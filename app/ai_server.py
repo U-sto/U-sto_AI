@@ -1,9 +1,11 @@
 import json
 import os
 import joblib
+import numpy as np
 import pandas as pd
 import math
 from datetime import datetime, timedelta
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -34,33 +36,116 @@ app = FastAPI(
     version="3.4.1"
 )
 
-MODEL_PATH = "rf_final_model.pkl"
-CSV_PATH = "phase4_training_data.csv"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RUNS_DIR = PROJECT_ROOT / "ai_model" / "experiments" / "runs"
+MODEL_PATH = Path(os.getenv("AI_MODEL_PATH", PROJECT_ROOT / "ai_model" / "saved_models" / "current" / "model.pkl"))
+MODEL_META_PATH = Path(os.getenv("AI_MODEL_META_PATH", MODEL_PATH.with_name("model_meta.json")))
+CSV_PATH = Path(os.getenv("AI_DATA_PATH", PROJECT_ROOT / "dataset" / "create_data" / "data_ml" / "phase4_training_data.csv"))
+FALLBACK_MODEL_PATH = PROJECT_ROOT / "ai_model" / "saved_models" / "random_forest" / "rf_final_model.pkl"
+
+DEFAULT_FEATURES = [
+    '내용연수', '취득금액', '부서가혹도', '가격민감도', '장비중요도',
+    'G2B목록명_Code', '물품분류명_Code', '운용부서코드_Code', '캠퍼스_Code'
+]
 
 rf_model = None
 df = None
+model_meta = {}
+model_features = DEFAULT_FEATURES.copy()
+
+DEFAULT_MONTHLY_DEMAND_FEATURES = [
+    "trend",
+    "month",
+    "month_sin",
+    "month_cos",
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_6",
+    "lag_12",
+    "rolling_mean_3",
+    "rolling_mean_6",
+    "rolling_std_6",
+]
+
+monthly_demand_model = None
+monthly_demand_features = DEFAULT_MONTHLY_DEMAND_FEATURES.copy()
+
+
+def find_latest_run_artifact(run_suffix: str, filename: str) -> Path | None:
+    candidates = []
+    if RUNS_DIR.exists():
+        for run_dir in RUNS_DIR.glob(f"*_{run_suffix}"):
+            candidate = run_dir / filename
+            if candidate.exists():
+                candidates.append(candidate)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def find_latest_monthly_model_artifact() -> Path | None:
+    candidates = []
+    for run_suffix, filename in [
+        ("stage3_monthly_model_search", "monthly_demand_model.pkl"),
+        ("stage3_timeseries_demand", "xgboost_lag_model.pkl"),
+    ]:
+        artifact = find_latest_run_artifact(run_suffix, filename)
+        if artifact is not None:
+            candidates.append(artifact)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
 
 # 모델 로딩
-if os.path.exists(MODEL_PATH):
+if not MODEL_PATH.exists() and FALLBACK_MODEL_PATH.exists():
+    MODEL_PATH = FALLBACK_MODEL_PATH
+    MODEL_META_PATH = MODEL_PATH.with_name("model_meta.json")
+
+if MODEL_PATH.exists():
     try:
         rf_model = joblib.load(MODEL_PATH)
-        print("✅ AI 모델 로딩 성공!")
+        if MODEL_META_PATH.exists():
+            with open(MODEL_META_PATH, "r", encoding="utf-8") as f:
+                model_meta = json.load(f)
+            model_features = model_meta.get("features", DEFAULT_FEATURES)
+        print(f"✅ AI 모델 로딩 성공! ({MODEL_PATH})")
     except Exception as e:
         print(f"❌ 모델 로딩 실패: {e}")
 
 # 데이터 파일 로딩
-if os.path.exists(CSV_PATH):
+MONTHLY_MODEL_PATH = find_latest_monthly_model_artifact()
+if MONTHLY_MODEL_PATH is not None and MONTHLY_MODEL_PATH.exists():
+    try:
+        monthly_demand_model = joblib.load(MONTHLY_MODEL_PATH)
+        monthly_meta_path = MONTHLY_MODEL_PATH.with_name("monthly_model_meta.json")
+        if monthly_meta_path.exists():
+            with open(monthly_meta_path, "r", encoding="utf-8") as f:
+                monthly_meta = json.load(f)
+            monthly_demand_features = monthly_meta.get("features", DEFAULT_MONTHLY_DEMAND_FEATURES)
+        print(f"✅ 월별 수요 모델 로딩 성공! ({MONTHLY_MODEL_PATH})")
+    except Exception as e:
+        print(f"⚠️ 월별 수요 모델 로딩 실패: {e}")
+
+if CSV_PATH.exists():
     try:
         try:
             df = pd.read_csv(CSV_PATH, encoding="utf-8")
         except UnicodeDecodeError:
             df = pd.read_csv(CSV_PATH, encoding="cp949")
-            
-        df['G2B목록명_Code'] = df['G2B목록명'].astype('category').cat.codes
-        df['물품분류명_Code'] = df['물품분류명'].astype('category').cat.codes
-        df['운용부서코드_Code'] = df['운용부서코드'].astype('category').cat.codes
-        df['캠퍼스_Code'] = df['캠퍼스'].astype('category').cat.codes
-        print("✅ 학습용 데이터 로딩 완료!")
+
+        # Phase 4에서 target encoding 컬럼이 이미 만들어진 경우 보존한다.
+        # 구버전 CSV만 있을 때에만 fallback category code를 만든다.
+        fallback_code_cols = {
+            'G2B목록명_Code': 'G2B목록명',
+            '물품분류명_Code': '물품분류명',
+            '운용부서코드_Code': '운용부서코드',
+            '캠퍼스_Code': '캠퍼스',
+        }
+        for code_col, source_col in fallback_code_cols.items():
+            if code_col not in df.columns and source_col in df.columns:
+                df[code_col] = df[source_col].astype('category').cat.codes
+        print(f"✅ 학습용 데이터 로딩 완료! ({CSV_PATH})")
     except Exception as e:
         print(f"❌ 데이터 로딩 실패: {e}")
 
@@ -119,6 +204,120 @@ def calculate_sigma_d(counts_list: list):
     mean = sum(counts_list) / n
     variance = sum((x - mean) ** 2 for x in counts_list) / (n - 1)
     return math.sqrt(variance)
+
+def build_model_input(target_df: pd.DataFrame) -> pd.DataFrame:
+    """model_meta.json의 feature 순서에 맞춰 서버 예측 입력을 만든다."""
+    global df
+    prepared = target_df.copy()
+    for feature in model_features:
+        if feature not in prepared.columns:
+            prepared[feature] = 0
+        prepared[feature] = pd.to_numeric(prepared[feature], errors="coerce")
+        if prepared[feature].isna().any():
+            if df is not None and feature in df.columns:
+                fallback = pd.to_numeric(df[feature], errors="coerce").median()
+            else:
+                fallback = 0
+            if pd.isna(fallback):
+                fallback = 0
+            prepared[feature] = prepared[feature].fillna(fallback)
+    return prepared[model_features]
+
+
+
+def make_event_date(df: pd.DataFrame) -> pd.Series:
+    disuse_date = pd.to_datetime(df["불용일자"], errors="coerce")
+    fallback_date = pd.to_datetime(df["취득일자"], errors="coerce") + pd.to_timedelta(
+        (pd.to_numeric(df["실제수명"], errors="coerce").fillna(0) * 365.25).round().astype("Int64"),
+        unit="D",
+    )
+    return disuse_date.fillna(fallback_date)
+
+
+def build_monthly_history_series(scope_df: pd.DataFrame) -> pd.DataFrame:
+    historical = scope_df[scope_df["학습데이터여부"].eq("Y")].copy()
+    if historical.empty:
+        return pd.DataFrame()
+
+    historical["event_date"] = make_event_date(historical)
+    historical = historical.dropna(subset=["event_date"])
+    if historical.empty:
+        return pd.DataFrame()
+
+    historical["event_month"] = historical["event_date"].dt.to_period("M").dt.to_timestamp()
+    monthly = historical.groupby("event_month").size().rename("actual_count").reset_index()
+    full_index = pd.date_range(monthly["event_month"].min(), monthly["event_month"].max(), freq="MS")
+    monthly = monthly.set_index("event_month").reindex(full_index, fill_value=0).reset_index()
+    monthly = monthly.rename(columns={"index": "event_month"})
+    monthly["month"] = monthly["event_month"].dt.month
+    monthly["trend"] = np.arange(len(monthly))
+    monthly["month_sin"] = np.sin(2 * np.pi * monthly["month"] / 12)
+    monthly["month_cos"] = np.cos(2 * np.pi * monthly["month"] / 12)
+    return monthly
+
+
+def add_monthly_lag_features(monthly: pd.DataFrame) -> pd.DataFrame:
+    out = monthly.copy()
+    for lag in [1, 2, 3, 6, 12]:
+        out[f"lag_{lag}"] = out["actual_count"].shift(lag)
+    out["rolling_mean_3"] = out["actual_count"].shift(1).rolling(3).mean()
+    out["rolling_mean_6"] = out["actual_count"].shift(1).rolling(6).mean()
+    out["rolling_std_6"] = out["actual_count"].shift(1).rolling(6).std()
+    return out
+
+
+def forecast_scope_monthly_demand(scope_df: pd.DataFrame, start_date: datetime, end_date: datetime):
+    if monthly_demand_model is None:
+        return None, None, None
+
+    monthly = build_monthly_history_series(scope_df)
+    if monthly.empty or len(monthly) < 6:
+        return None, None, None
+
+    history_feat = add_monthly_lag_features(monthly)
+    for feature in monthly_demand_features:
+        if feature not in history_feat.columns:
+            history_feat[feature] = np.nan
+    fill_values = history_feat[monthly_demand_features].median(numeric_only=True).fillna(0)
+    actual_lookup = {pd.Timestamp(row.event_month): int(row.actual_count) for row in monthly.itertuples()}
+    working_counts = monthly["actual_count"].astype(float).tolist()
+    target_month_dates = list(pd.date_range(start_date, end_date, freq="MS"))
+    forecast_map = {}
+
+    for month_dt in target_month_dates:
+        month_key = pd.Timestamp(month_dt.to_period("M").to_timestamp())
+        if month_key in actual_lookup:
+            forecast_map[month_dt.month] = int(actual_lookup[month_key])
+            continue
+
+        feat_row = pd.DataFrame([
+            {
+                "trend": len(working_counts),
+                "month": month_dt.month,
+                "month_sin": np.sin(2 * np.pi * month_dt.month / 12),
+                "month_cos": np.cos(2 * np.pi * month_dt.month / 12),
+                "lag_1": working_counts[-1] if len(working_counts) >= 1 else np.nan,
+                "lag_2": working_counts[-2] if len(working_counts) >= 2 else np.nan,
+                "lag_3": working_counts[-3] if len(working_counts) >= 3 else np.nan,
+                "lag_6": working_counts[-6] if len(working_counts) >= 6 else np.nan,
+                "lag_12": working_counts[-12] if len(working_counts) >= 12 else np.nan,
+                "rolling_mean_3": float(np.mean(working_counts[-3:])) if len(working_counts) >= 3 else np.nan,
+                "rolling_mean_6": float(np.mean(working_counts[-6:])) if len(working_counts) >= 6 else np.nan,
+                "rolling_std_6": float(np.std(working_counts[-6:], ddof=1)) if len(working_counts) >= 6 else np.nan,
+            }
+        ])
+        feat_row = feat_row[monthly_demand_features].fillna(fill_values)
+        pred_count = float(monthly_demand_model.predict(feat_row)[0])
+        pred_count = max(0.0, pred_count)
+        forecast_map[month_dt.month] = int(round(pred_count))
+        working_counts.append(pred_count)
+
+    if not forecast_map:
+        return None, None, None
+
+    peak_month = max(forecast_map.keys(), key=lambda m: forecast_map.get(m, 0))
+    return forecast_map, peak_month, target_month_dates
+
 
 REPORT_SYSTEM_PROMPT = """
 당신은 대학 자산 관리 실무자를 돕는 'SCM AI 분석 파트너'입니다.
@@ -331,13 +530,16 @@ async def predict_analysis(req: PredictionRequest):
                 target_df['장비중요도'] = (target_df['가격민감도'] * 100 * 0.5) + (target_df['등급점수'] * 0.5)
 
         # 3. AI 모델 예측 수행
-        features = ['내용연수', '취득금액', '부서가혹도', '가격민감도', '장비중요도', 'G2B목록명_Code', '물품분류명_Code', '운용부서코드_Code', '캠퍼스_Code']
-        input_data = target_df[features]
+        input_data = build_model_input(target_df)
         target_df['예측수명_월'] = rf_model.predict(input_data)
         
         # 4. 고장 예상일 계산
-        target_df['고장예상일'] = target_df['예측수명_월'].apply(
-            lambda x: datetime.now() + timedelta(days=float(x) * 30.4)
+        # 모델은 총수명(개월)을 예측하므로 현재 운용연차를 뺀 RUL을 사용한다.
+        age_months = pd.to_numeric(target_df.get('운용연차', 0), errors='coerce').fillna(0) * 12
+        target_df['RUL_개월_raw'] = target_df['예측수명_월'] - age_months
+        target_df['RUL_개월'] = target_df['RUL_개월_raw'].clip(lower=0.5)
+        target_df['고장예상일'] = target_df['RUL_개월'].apply(
+            lambda x: datetime.now() + timedelta(days=float(x) * 30.4375)
         )
 
         req_year = int(cond.year)
@@ -367,6 +569,8 @@ async def predict_analysis(req: PredictionRequest):
         else:
             target_months = list(range(start_date.month, 13)) + list(range(1, end_date.month + 1))
 
+        target_month_dates = list(pd.date_range(start_date, end_date, freq="MS"))
+
         # -------------------------------------------------------------------
         # [구역 3] 조달권고안 (개별 품목별 데이터)
         # -------------------------------------------------------------------
@@ -387,114 +591,59 @@ async def predict_analysis(req: PredictionRequest):
         model_rmse = 5.0 
         buffer_days = math.ceil(z_val * model_rmse) 
 
-        if not filtered_df.empty:
-            filtered_df['고장예상월'] = filtered_df['고장예상일'].dt.month
-            grouped = filtered_df.groupby('G2B목록명')
-            item_id = 1
-            
-            for item_name, group_df in grouped:
-                monthly_counts_item = group_df.groupby('고장예상월').size().to_dict()
-                counts_list = [monthly_counts_item.get(m, 0) for m in target_months]
-                
-                monthly_avg_demand = sum(counts_list) / len(target_months) if target_months else 0
-                avg_lead_days = group_df['리드타임_일'].mean()
-                lead_time_months = avg_lead_days / 30.4
-                avg_sqrt_L = group_df['sqrt_L'].mean()
-                
-                sigma_d = calculate_sigma_d(counts_list)
-                safety_stock = math.ceil(z_val * sigma_d * avg_sqrt_L)
-                rop_qty = math.ceil((monthly_avg_demand * lead_time_months) + safety_stock)
-                
-                cumulative_demand = 0
-                trigger_month = target_months[0] if target_months else 1
-                rop_triggered = False
-                
-                for m in target_months:
-                    cumulative_demand += monthly_counts_item.get(m, 0)
-                    if cumulative_demand >= rop_qty and not rop_triggered:
-                        trigger_month = m
-                        rop_triggered = True
-                
-                if not rop_triggered:
-                    trigger_month = max(target_months, key=lambda x: monthly_counts_item.get(x, 0)) if target_months else 1
-                    
-                rop_trigger_months.append(trigger_month)
-                
-                base_qty = len(group_df)
-                total_req_qty = base_qty + safety_stock
-                
-                unit_price = int(group_df['취득금액'].mean()) if len(group_df) > 0 else 0
-                urgent_budget = total_req_qty * unit_price 
-                
-                total_base_qty_all += base_qty
-                total_safety_stock_all += safety_stock
-                
-                avg_timestamp = group_df['고장예상일'].astype('int64').mean()
-                pred_failure_date = pd.to_datetime(avg_timestamp)
-                
-                # buffer_days가 클수록(High risk level) rec_order_date는 날짜가 뺴지므로 더 일찍 발주하게 됨.
-                rec_order_date = pred_failure_date - timedelta(days=(avg_lead_days + buffer_days))
-                
-                recommendations.append({
-                    "id": item_id,
-                    "item_name": item_name,
-                    "quantity": total_req_qty, 
-                    "unit_price": unit_price,
-                    "estimated_budget": urgent_budget,
-                    "recommend_order_date": rec_order_date.strftime("%Y-%m-%d")
-                })
-                item_id += 1 
-                
-        else:
-            target_item = cond.category if cond.category and cond.category != "전체" else "전체 품목"
-            recommendations.append({
-                "id": 1,
-                "item_name": target_item,
-                "quantity": 0,
-                "unit_price": 0,
-                "estimated_budget": 0,
-                "recommend_order_date": "-"
-            })
-        
-        valid_dates = [datetime.strptime(r['recommend_order_date'], "%Y-%m-%d") for r in recommendations if r['recommend_order_date'] != "-"]
-        earliest_order_date = min(valid_dates).strftime("%Y-%m-%d") if valid_dates else "-"
-        final_rop_month = min(valid_dates).month if valid_dates else 0
+        forecast_monthly_counts, forecast_peak_month, target_month_dates = forecast_scope_monthly_demand(
+            df[(df['운용부서명'] == cond.dept_name) & (df['학습데이터여부'] == 'Y')].copy()
+            if (not cond.category or cond.category == "전체")
+            else df[(df['운용부서명'] == cond.dept_name) & (df['학습데이터여부'] == 'Y') & (df['물품분류명'] == cond.category)].copy(),
+            start_date,
+            end_date,
+        )
 
-        # -------------------------------------------------------------------
-        # [구역 1] 수요 예측 시계열
-        # -------------------------------------------------------------------
-        if not filtered_df.empty:
-            monthly_counts_total = filtered_df.groupby('고장예상월').size().to_dict()
+        if forecast_monthly_counts is not None:
+            monthly_counts_total = forecast_monthly_counts
+            peak_month = forecast_peak_month if forecast_peak_month else (max(target_months, key=lambda m: monthly_counts_total.get(m, 0)) if target_months else 0)
         else:
-            monthly_counts_total = {}
-            
+            if not filtered_df.empty:
+                monthly_counts_total = filtered_df.groupby('고장예상월').size().to_dict()
+            else:
+                monthly_counts_total = {}
+            peak_month = max(rop_trigger_months, key=rop_trigger_months.count) if rop_trigger_months else (max(target_months, key=lambda m: monthly_counts_total.get(m, 0)) if target_months else 0)
+
+        if target_months and peak_month in target_months:
+            peak_idx = target_months.index(peak_month)
+            final_rop_month = target_months[max(0, peak_idx - 1)]
+        else:
+            final_rop_month = target_months[0] if target_months else 0
+
         time_series = []
         for m in range(1, 13):
             qty = int(monthly_counts_total.get(m, 0)) if m in target_months else 0
             is_rop_flag = (m == final_rop_month)
-            
+
             ts_item = {
                 "month": m,
                 "quantity": qty,
                 "is_rop": is_rop_flag
             }
             if is_rop_flag:
-                ts_item["rop_date"] = earliest_order_date 
-                ts_item["base_qty"] = total_base_qty_all 
+                rop_date_value = earliest_order_date
+                if target_month_dates:
+                    rop_anchor = next((dt for dt in target_month_dates if dt.month == final_rop_month), None)
+                    if rop_anchor is not None:
+                        rop_date_value = rop_anchor.strftime("%Y-%m-%d")
+                ts_item["rop_date"] = rop_date_value
+                ts_item["base_qty"] = total_base_qty_all
                 ts_item["safety_stock"] = total_safety_stock_all
-                ts_item["total_order_qty"] = total_base_qty_all + total_safety_stock_all 
-                
+                ts_item["total_order_qty"] = total_base_qty_all + total_safety_stock_all
+
             time_series.append(ts_item)
 
-        # -------------------------------------------------------------------
-        # [구역 2] AI 전략적 조달 가이드 (좌측 패널 - 전체 요약)
-        # -------------------------------------------------------------------
         if not filtered_df.empty:
             total_qty_all = sum(r['quantity'] for r in recommendations)
             total_budget_all = sum(r['estimated_budget'] for r in recommendations)
             
             target_item_name = cond.category if cond.category and cond.category != "전체" else "전체 품목"
-            peak_month = max(rop_trigger_months, key=rop_trigger_months.count) if rop_trigger_months else final_rop_month
+            peak_month = peak_month if peak_month else final_rop_month
             
             ai_guide_data = get_llm_ai_guide(req.prompt, target_item_name, total_qty_all, earliest_order_date, peak_month)
             

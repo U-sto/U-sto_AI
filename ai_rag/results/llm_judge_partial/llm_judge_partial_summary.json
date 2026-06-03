@@ -1,0 +1,9 @@
+{
+  "sample_count": 23,
+  "faithfulness_mean": 4.608695652173913,
+  "answer_relevance_mean": 4.695652173913044,
+  "reference_alignment_mean": 3.347826086956522,
+  "hallucination_rate": 0.043478260869565216,
+  "retrieved_source_hit_rate": 0.9130434782608695,
+  "retrieved_chapter_hit_rate": 0.5652173913043478
+}

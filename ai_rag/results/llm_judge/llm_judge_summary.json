@@ -1,0 +1,25 @@
+{
+  "sample_count": 64,
+  "faithfulness_mean": 4.9375,
+  "answer_relevance_mean": 4.9375,
+  "reference_alignment_mean": 4.921875,
+  "hallucination_rate": 0.015625,
+  "retrieved_source_hit_rate": 0.984375,
+  "retrieved_chapter_hit_rate": 0.984375,
+  "config": {
+    "dataset_path": "C:\\Users\\Hwang_Yulim\\U-sto_AI\\dataset\\qa_output\\manual_qa_final.json",
+    "db_path": "C:\\Users\\Hwang_Yulim\\U-sto_AI\\chroma_db",
+    "collection": "langchain",
+    "top_k": 10,
+    "generation_model": "gpt-4o",
+    "judge_model": "gpt-4o",
+    "embedding_model": "text-embedding-3-small",
+    "sample_size": null,
+    "seed": 42
+  },
+  "plots": [
+    "C:\\Users\\Hwang_Yulim\\U-sto_AI\\ai_rag\\results\\llm_judge\\01_llm_judge_metric_scores.png",
+    "C:\\Users\\Hwang_Yulim\\U-sto_AI\\ai_rag\\results\\llm_judge\\02_llm_judge_score_distribution.png",
+    "C:\\Users\\Hwang_Yulim\\U-sto_AI\\ai_rag\\results\\llm_judge\\03_hallucination_rate_by_category.png"
+  ]
+}

@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 
 
 # 경로 설정 (dataset/FAQ/faq_data.json)
-BASE_DIR = Path(__file__).resolve().parent.parent
-FAQ_FILE_PATH = BASE_DIR / "dataset" / "FAQ" / "faq_data.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FAQ_FILE_PATH = PROJECT_ROOT / "dataset" / "FAQ" / "faq_data.json"
 
 
 # 캐싱 및 상태 관리 변수
@@ -102,7 +102,7 @@ def get_relevant_faq_string(user_question: str) -> str:
         formatted_blocks = ["[FAQ 전체 내용 목록]"]
         for item in _FAQ_CACHE_DATA:
             # 각 FAQ 항목의 질문과 답변 쌍을 모두 추가
-            formatted_blocks.append(f"Q: {item['question']}\nA: {item['answer']}")
+            formatted_blocks.append(_format_faq_context_block(item))
         return "\n\n".join(formatted_blocks)
 
     # 3. [키워드 매칭]
@@ -128,7 +128,18 @@ def get_relevant_faq_string(user_question: str) -> str:
     # [최적화] 리스트에 모은 뒤 join 수행
     formatted_blocks = []
     for item in matched_items:
-        formatted_blocks.append(f"Q: {item['question']}\nA: {item['answer']}")
+        formatted_blocks.append(_format_faq_context_block(item))
     
     # 각 Q&A 블록 사이에 빈 줄(Double Newline)을 넣어 구분
     return "\n\n".join(formatted_blocks)
+
+
+def _format_faq_context_block(item: Dict) -> str:
+    return (
+        "doc_type=faq\n"
+        "source=faq\n"
+        f"faq_source={item.get('source', '')}\n"
+        f"category={item.get('category', '')}\n"
+        f"Q: {item['question']}\n"
+        f"A: {item['answer']}"
+    )

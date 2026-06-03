@@ -124,6 +124,26 @@ DEPT_MASTER_DATA = [
     ("C188", "인문과학대학RC행정팀(서울)", 1.1),      # 일반 사무 위주
 ]
 
+# 부서별 예산/교체/관리 성향.
+# 실제 예산액이 아니라 합성 데이터에서 부서 운영 성향을 약하게 표현하는 지표다.
+DEPT_POLICY_DATA = {
+    "C354": ("HIGH", 1.12, 1.04),
+    "C352": ("HIGH", 1.10, 1.02),
+    "C364": ("MEDIUM", 1.00, 1.00),
+    "C360": ("MEDIUM", 0.98, 1.00),
+    "A351": ("MEDIUM", 0.96, 1.10),
+    "A320": ("MEDIUM", 1.02, 1.03),
+    "A124": ("MEDIUM", 1.03, 1.02),
+    "A125": ("LOW", 0.94, 0.98),
+    "C190": ("MEDIUM", 0.99, 1.00),
+    "C192": ("HIGH", 1.08, 1.06),
+    "C182": ("HIGH", 1.13, 1.04),
+    "C188": ("LOW", 0.95, 0.99),
+}
+
+def get_dept_policy(dept_code):
+    return DEPT_POLICY_DATA.get(dept_code, ("MEDIUM", 1.00, 1.00))
+
 # ---------------------------------------------------------
 # 2. 로직: "수명 주기 기반(Lifecycle-based)" 데이터 생성 (배치 구매 적용)
 # ---------------------------------------------------------
@@ -189,6 +209,8 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
 
     # 캠퍼스 결정 로직
     campus_val = '서울' if '(서울)' in dept_name else 'ERICA'
+    budget_grade, replacement_tendency, management_tendency = get_dept_policy(dept_code)
+    batch_id = f"B{date_obj.year}{len(data_list) + 1:06d}"
 
     row = {
         'G2B_목록번호': class_code + id_code,
@@ -206,6 +228,12 @@ def _create_acquisition_row(data_list, date_obj, item_data, dept_code, dept_name
         '운용상태': '취득',
         '내용연수': life_years,
         '수량': quantity,
+        '구매배치ID': batch_id,
+        '구매배치수량': quantity,
+        '대량구매여부': int(quantity >= 10),
+        '부서예산등급': budget_grade,
+        '부서교체성향': replacement_tendency,
+        '부서관리성향': management_tendency,
         '승인상태': approval_status,
         '취득정리구분': acq_method,
         '비고': remark
@@ -239,6 +267,8 @@ def _inject_special_server_data(data_list):
             clear_date = acq_date + timedelta(days=random.randint(14, 45))
             
             campus_val = '서울' if '(서울)' in dept_name else 'ERICA'
+            budget_grade, replacement_tendency, management_tendency = get_dept_policy(dept_code)
+            batch_id = f"B{acq_date.year}{len(data_list) + 1:06d}"
             
             row = {
                 'G2B_목록번호': sv_full_code,
@@ -256,6 +286,12 @@ def _inject_special_server_data(data_list):
                 '운용상태': '취득',
                 '내용연수': sv_life,
                 '수량': 1,
+                '구매배치ID': batch_id,
+                '구매배치수량': 1,
+                '대량구매여부': 0,
+                '부서예산등급': budget_grade,
+                '부서교체성향': replacement_tendency,
+                '부서관리성향': management_tendency,
                 '승인상태': '확정',
                 '취득정리구분': '자체구입',
                 '비고': f"{dept_name} 메인 서버 구축"
@@ -421,7 +457,8 @@ df_acquisition = generate_acquisition_data_lifecycle()
 # [03-01] 물품 취득 대장 목록 (Main Output)
 cols_acquisition = [
     'G2B_목록번호', 'G2B_목록명', '캠퍼스', '취득일자', '취득금액', '정리일자', 
-    '운용부서', '운용상태', '내용연수', '수량', '승인상태', 
+    '운용부서', '운용상태', '내용연수', '수량', '구매배치ID', '구매배치수량',
+    '대량구매여부', '부서예산등급', '부서교체성향', '부서관리성향', '승인상태', 
     '취득정리구분', '운용부서코드', '비고'
 ]
 df_acquisition[cols_acquisition].to_csv(os.path.join(SAVE_DIR, '03_01_acquisition_master.csv'), index=False, encoding='utf-8-sig')

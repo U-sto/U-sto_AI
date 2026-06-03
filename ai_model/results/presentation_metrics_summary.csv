@@ -1,0 +1,2 @@
+﻿stage2_best_model,stage2_test_rmse_months,stage2_test_mae_months,stage2_test_r2,stage2_term_f1,stage3_best_monthly_model,stage3_monthly_rmse_count,stage3_monthly_mae_count,stage3_monthly_r2,current_model_feature_count,rul_urgent_count,rul_urgent_pct,rul_total_count
+CatBoost,13.276507027817116,10.150677809089276,0.90419116040341,0.8313908313908314,ExtraTrees,9.77647662060386,5.377402603646453,0.9796592186776442,15,4497,49.78963684676705,9032

@@ -1,361 +1,369 @@
-import pytest
 import json
-import logging
-from unittest.mock import patch, MagicMock
-from langchain_core.messages import AIMessage
-from typing import NamedTuple
+import os
+import sys
+import unittest
+from unittest.mock import MagicMock, call, patch
 
-# 테스트할 대상 함수
+from langchain_core.documents import Document
+from langchain_core.messages import AIMessage
+
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+from rag import chain
 from rag.chain import run_rag_chain
 
-# --------------------------------------------------------------------------
-# 1. Fixtures (환경 설정)
-# --------------------------------------------------------------------------
 
-@pytest.fixture(autouse=True)
-def _set_test_env(monkeypatch):
-    """테스트 환경변수 강제 주입"""
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("BACKEND_API_URL", "http://test-backend")
-    monkeypatch.setenv("FRONTEND_BASE_URL", "http://test-frontend")
-
-class MockContext(NamedTuple):
-    base_llm: MagicMock      # Generator
-    bound_llm: MagicMock     # Router
-    vectordb: MagicMock
-    retriever: MagicMock
-
-@pytest.fixture(scope="function")
-def mock_dependencies():
-    """RAG 체인 의존성 Mocking 및 정리(Teardown)"""
-    # 1. Mock 객체 생성
-    mock_base_llm = MagicMock(name="BaseLLM")
-    mock_bound_llm = MagicMock(name="BoundLLM")
-    mock_vectordb = MagicMock(name="VectorDB")
-    mock_retriever = MagicMock(name="Retriever")
-
-    # 2. LLM 바인딩 설정
-    mock_base_llm.bind_tools.return_value = mock_bound_llm
-    
-    # 체이닝 메서드 방어
-    mock_base_llm.with_config.return_value = mock_base_llm
-    mock_base_llm.with_fallbacks.return_value = mock_base_llm
-    mock_bound_llm.with_config.return_value = mock_bound_llm
-    mock_bound_llm.with_retry.return_value = mock_bound_llm
-
-    # 3. VectorDB -> Retriever 연결
-    mock_vectordb.as_retriever.return_value = mock_retriever
-    mock_retriever.invoke.return_value = [] # 기본: 검색 결과 없음
-
-    context = MockContext(
-        base_llm=mock_base_llm,
-        bound_llm=mock_bound_llm,
-        vectordb=mock_vectordb,
-        retriever=mock_retriever
+def _doc(
+    doc_id: str,
+    content: str = "물품 반납 절차 안내",
+    category: str = "물품 반납 관리",
+    doc_type: str = "manual_chunk",
+    chapter: str = "반납",
+    source: str = "manual.json",
+) -> Document:
+    return Document(
+        page_content=content,
+        metadata={
+            "doc_id": doc_id,
+            "source": source,
+            "chapter": chapter,
+            "category": category,
+            "title": f"{category} 절차",
+            "section_path": f"{chapter} > {category}",
+            "chunk_index": 1,
+            "doc_type": doc_type,
+        },
     )
 
-    yield context
 
-    # Clean-up
-    mock_base_llm.reset_mock()
-    mock_bound_llm.reset_mock()
-    mock_vectordb.reset_mock()
-    mock_retriever.reset_mock()
+class TestRunRagChain(unittest.TestCase):
+    def setUp(self):
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["BACKEND_API_URL"] = "http://test-backend"
+        os.environ["FRONTEND_BASE_URL"] = "http://test-frontend"
 
+        self.base_llm = MagicMock(name="base_llm")
+        self.tool_llm = MagicMock(name="tool_llm")
+        self.base_llm.bind_tools.return_value = self.tool_llm
+        self.tool_llm.invoke.return_value = AIMessage(content="", tool_calls=[])
+        self.base_llm.invoke.return_value = AIMessage(content="테스트 답변")
 
-# --------------------------------------------------------------------------
-# 2. Test Cases (완벽 격리 버전)
-# --------------------------------------------------------------------------
+        self.log_patcher = patch.object(chain, "_write_retrieval_log")
+        self.log_patcher.start()
 
-# [수정 포인트] 모든 테스트에서 앞단 체인(Classifier, Refiner)을 Mocking 하여
-# 실제 로직이나 외부 API 호출 없이 오직 'Router'와 'Tool' 로직만 검증하도록 격리함.
+    def tearDown(self):
+        self.log_patcher.stop()
 
-@patch("rag.chain.PromptTemplate")
-def test_simple_qa_flow_no_tools(mock_prompt_template, mock_dependencies):
-    """[Scenario] 도구 호출 없음 -> RAG 검색 파이프라인 실행"""
-    ctx = mock_dependencies
-    # 1. 사전 단계 Mock (Classifier, Refiner 체인을 PromptTemplate 레벨에서 Mock)
-    mock_classifier_chain = MagicMock(name="classifier_chain")
-    mock_refiner_chain = MagicMock(name="refiner_chain")
-    mock_classifier_chain.invoke.return_value = {"category": "general"}
-    mock_refiner_chain.invoke.return_value = "안녕"
-     # PromptTemplate.from_template(...)는 실제로 PromptTemplate을 반환하고,
-    # 이후 파이프 연산자(|)를 통해 체인이 생성된다고 가정한다.
-    # 이를 반영하기 위해 템플릿 Mock을 생성하고 __or__ 연산 결과로 체인 Mock을 반환하도록 설정한다.
-    mock_classifier_template = MagicMock(name="classifier_template")
-    mock_refiner_template = MagicMock(name="refiner_template")
-    mock_classifier_template.__or__.return_value = mock_classifier_chain
-    mock_refiner_template.__or__.return_value = mock_refiner_chain
-    # run_rag_chain 내부에서 PromptTemplate.from_template(...)가
-    # 분류기, 정제기 순으로 두 번 호출된다고 가정하고 각각 템플릿 Mock을 반환
-    mock_prompt_template.from_template.side_effect = [
-        mock_classifier_template,
-        mock_refiner_template,
-    ]
+    def test_procedure_question_routes_to_rag(self):
+        vectordb = MagicMock(name="vectordb")
+        docs = [(_doc("return-1"), 0.11), (_doc("return-2"), 0.18)]
+        self.base_llm.invoke.return_value = AIMessage(content="반납 절차 답변")
 
-    # 2. Router: 도구 사용 안 함 (Tool Calls 비어있음)
-    ctx.bound_llm.invoke.return_value = AIMessage(content="", tool_calls=[])
+        with (
+            patch.object(chain, "USE_RERANKING", False),
+            patch.object(chain, "classify_question", return_value="NEED_RAG") as classify_mock,
+            patch.object(chain, "refine_query", return_value="물품 반납 절차") as refine_mock,
+            patch.object(chain, "retrieve_candidate_docs", return_value=docs) as retrieve_mock,
+            patch.object(chain, "filter_retrieved_docs", return_value=docs),
+        ):
+            result = run_rag_chain(self.base_llm, vectordb, "반납 절차 알려줘")
 
-    # 3. Generator: RAG 답변 생성
-    expected_answer = "반갑습니다."
-    ctx.base_llm.invoke.return_value = AIMessage(content=expected_answer)
+        self.base_llm.bind_tools.assert_called_once_with(chain.TOOLS)
+        classify_mock.assert_called_once_with(self.base_llm, "반납 절차 알려줘")
+        refine_mock.assert_called_once_with(self.base_llm, "반납 절차 알려줘")
+        retrieve_mock.assert_called_once_with(
+            vectordb=vectordb,
+            user_query="반납 절차 알려줘",
+            refined_query="물품 반납 절차",
+            top_k=chain.RETRIEVER_TOP_K,
+            search_mode=chain.RAG_SEARCH_MODE,
+            use_hybrid=chain.USE_HYBRID_RETRIEVAL,
+        )
+        self.assertEqual(result["answer"], "반납 절차 답변")
+        self.assertEqual(result["diagnostics"]["classification"], "NEED_RAG")
+        self.assertEqual(result["diagnostics"]["tool_rag_policy"], "rag_only")
+        self.assertEqual(result["diagnostics"]["final_context_count"], 2)
 
-    # 4. 실행
-    result = run_rag_chain(ctx.base_llm, ctx.vectordb, "안녕")
+    def test_greeting_routes_to_no_rag_and_skips_retrieval(self):
+        self.base_llm.invoke.return_value = AIMessage(content="안녕하세요.")
 
-    # 5. 검증
-    # - 도구가 없으면 검색(Retriever)이 실행되어야 함
-    ctx.retriever.invoke.assert_called_once()
-    assert result["answer"] == expected_answer
+        with (
+            patch.object(chain, "classify_question", return_value="NO_RAG") as classify_mock,
+            patch.object(chain, "refine_query") as refine_mock,
+            patch.object(chain, "retrieve_candidate_docs") as retrieve_mock,
+        ):
+            result = run_rag_chain(self.base_llm, MagicMock(), "안녕")
 
+        classify_mock.assert_called_once_with(self.base_llm, "안녕")
+        refine_mock.assert_not_called()
+        retrieve_mock.assert_not_called()
+        self.assertEqual(result["answer"], "안녕하세요.")
+        self.assertEqual(result["attribution"], [])
+        self.assertEqual(result["diagnostics"]["classification"], "NO_RAG")
+        self.assertEqual(result["diagnostics"]["tool_rag_policy"], "no_rag")
 
-@patch("rag.chain.query_refinement_chain")
-@patch("rag.chain.question_classifier_chain")
-@patch("rag.chain.get_item_detail_info")
-def test_tool_execution_search(mock_tool, mock_classifier, mock_refiner, mock_dependencies):
-    """[Scenario] 도구 호출 -> 검색 결과로 답변 (RAG 스킵)"""
-    
-    ctx = mock_dependencies
+    def test_no_context_response_when_threshold_filter_removes_candidates(self):
+        docs = [(_doc("far-doc"), 9.9)]
 
-    # ------------------------------------------------------------------
-    # 1. 체인(Chain)들의 결과값 직접 지정 (LLM side_effect 대신)
-    # ------------------------------------------------------------------
-    
-    # (1) 분류기: "이건 검색(search)이나 도구 사용이 필요해" 라고 판단
-    # 실제 코드가 딕셔너리를 기대하므로 딕셔너리 반환
-    mock_classifier.invoke.return_value = {"category": "search"}
+        with (
+            patch.object(chain, "classify_question", return_value="NEED_RAG"),
+            patch.object(chain, "refine_query", return_value="물품 불용 절차"),
+            patch.object(chain, "retrieve_candidate_docs", return_value=docs),
+            patch.object(chain, "filter_retrieved_docs", return_value=[]) as filter_mock,
+        ):
+            result = run_rag_chain(self.base_llm, MagicMock(), "불용 절차 알려줘")
 
-    # (2) 정제기: 질문을 깔끔하게 다듬어줌
-    mock_refiner.invoke.return_value = "맥북 찾아줘"
+        filter_mock.assert_called_once_with(docs, strategy=chain.RAG_THRESHOLD_STRATEGY)
+        self.assertEqual(result["answer"], chain.NO_CONTEXT_RESPONSE)
+        self.assertEqual(result["diagnostics"]["retrieved_count"], 1)
+        self.assertEqual(result["diagnostics"]["filtered_count"], 0)
+        self.assertEqual(result["diagnostics"]["final_context_count"], 0)
 
-    # ------------------------------------------------------------------
-    # 2. Router(도구 선택기) 역할인 bound_llm 설정
-    # ------------------------------------------------------------------
-    # 사용자가 "맥북 찾아줘"라고 했을 때, LLM이 도구를 호출하기로 결정하는 부분
-    ctx.bound_llm.invoke.return_value = AIMessage(
-        content="",
-        tool_calls=[{
-            "name": "get_item_detail_info", 
-            "args": {"asset_name": "맥북"}, 
-            "id": "call_1"
-        }]
-    )
+    def test_reranker_orders_final_context_when_enabled(self):
+        vectordb = MagicMock(name="vectordb")
+        docs = [
+            (_doc("vector-1", category="물품 반납 관리", chapter="반납"), 0.10),
+            (_doc("vector-2", category="물품 불용 관리", chapter="불용"), 0.11),
+            (_doc("vector-3", category="물품 취득 관리", chapter="취득"), 0.12),
+        ]
+        reranked = [
+            (docs[2][0], docs[2][1], 0.98),
+            (docs[0][0], docs[0][1], 0.77),
+            (docs[1][0], docs[1][1], 0.66),
+        ]
+        reranker = MagicMock(name="reranker")
+        reranker.rerank_with_scores.return_value = reranked
+        self.base_llm.invoke.return_value = AIMessage(content="reranked answer")
 
-    # ------------------------------------------------------------------
-    # 3. 도구(Tool)의 실행 결과 설정
-    # ------------------------------------------------------------------
-    # 실제 도구가 실행되었을 때 뱉을 결과값 (보통 문자열이나 JSON)
-    mock_tool.invoke.return_value = json.dumps({"result": "재고 10대 있음"})
+        with (
+            patch.object(chain, "USE_RERANKING", True),
+            patch.object(chain, "RERANK_TOP_N", 4),
+            patch.object(chain, "RERANK_CANDIDATE_K", 10),
+            patch.object(chain, "classify_question", return_value="NEED_RAG"),
+            patch.object(chain, "refine_query", return_value="물품 반납 불용 차이"),
+            patch.object(chain, "retrieve_candidate_docs", return_value=docs),
+            patch.object(chain, "filter_retrieved_docs", return_value=docs),
+            patch.object(chain, "CrossEncoderReranker", return_value=reranker) as reranker_cls,
+        ):
+            result = run_rag_chain(self.base_llm, vectordb, "반납과 불용 차이 알려줘")
 
-    # ------------------------------------------------------------------
-    # 4. 실행 (Run)
-    # ------------------------------------------------------------------
-    # 테스트 대상 함수 실행
-    from rag.chain import run_rag_chain  # (import 위치는 파일 상단 권장)
-    result = run_rag_chain(ctx.base_llm, ctx.vectordb, "맥북 찾아줘")
+        reranker_cls.assert_called_once_with(chain.RERANKER_MODEL_NAME)
+        reranker.rerank_with_scores.assert_called_once_with(
+            query="물품 반납 불용 차이",
+            docs_with_scores=docs,
+            top_n=4,
+        )
+        self.assertEqual(
+            [entry["doc_id"] for entry in result["diagnostics"]["final_context_scores"]],
+            ["vector-3", "vector-1", "vector-2"],
+        )
+        self.assertEqual(
+            [item["doc_id"] for item in result["attribution"]],
+            ["vector-3", "vector-1", "vector-2"],
+        )
+        self.assertIn("rerank_score=0.980000", result["diagnostics"]["final_context_text"])
 
-    # ------------------------------------------------------------------
-    # 5. 검증 (Assert)
-    # ------------------------------------------------------------------
-    
-    # (1) Retriever(벡터 검색)가 호출되지 않았는지 확인 (도구를 썼으니까)
-    ctx.retriever.invoke.assert_not_called()
-    
-    # (2) 도구가 올바른 인자로 호출되었는지 확인
-    mock_tool.invoke.assert_called_with({"asset_name": "맥북"})
-    
-    # (3) 결과값 확인 (result는 보통 딕셔너리거나 문자열)
-    # 로직에 따라 도구 결과를 그대로 줄 수도 있고, LLM이 한 번 더 말할 수도 있음.
-    # 여기서는 결과에 도구 리턴값이 포함되어 있는지 확인
-    print("Debug Result:", result)  # 디버깅용 출력
-    
-    # 만약 run_rag_chain이 최종적으로 도구 결과를 'answer' 키에 담아준다면:
-    assert "재고 10대 있음" in str(result.get("answer", "")) or "재고 10대 있음" in str(result)
+    def test_tool_lookup_question_skips_rag(self):
+        fake_tool = MagicMock(name="get_item_detail_info")
+        fake_tool.invoke.return_value = json.dumps({"result": "재고 10대 있음"}, ensure_ascii=False)
+        self.tool_llm.invoke.return_value = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "get_item_detail_info",
+                    "args": {"asset_name": "노트북"},
+                    "id": "call-1",
+                }
+            ],
+        )
+        self.base_llm.invoke.return_value = AIMessage(content="노트북 재고는 10대입니다.")
 
+        with (
+            patch.object(chain, "TOOL_MAP", {"get_item_detail_info": fake_tool}),
+            patch.object(chain, "classify_question") as classify_mock,
+            patch.object(chain, "retrieve_candidate_docs") as retrieve_mock,
+        ):
+            result = run_rag_chain(self.base_llm, MagicMock(), "노트북 재고 조회해줘")
 
-@patch("rag.chain.PromptTemplate")
-@patch("rag.chain.open_usage_prediction_page")
-def test_tool_execution_navigate(mock_nav_tool, mock_prompt_template, mock_dependencies):
-    """[Scenario] 도구 결과가 'navigate' -> 즉시 반환 (Early Return)"""
-    ctx = mock_dependencies
-    # 1. 사전 단계 Mock: Classifier / Refiner 체인을 PromptTemplate를 통해 생성되는 체인으로 가정
-    classifier_chain = MagicMock()
-    refiner_chain = MagicMock()
-    mock_prompt_template.from_template.side_effect = [classifier_chain, refiner_chain]
-    classifier_chain.invoke.return_value = {"category": "predict"}
-    refiner_chain.invoke.return_value = "수명 예측해줘"
+        fake_tool.invoke.assert_called_once_with({"asset_name": "노트북"})
+        classify_mock.assert_not_called()
+        retrieve_mock.assert_not_called()
+        self.assertEqual(result["answer"], "노트북 재고는 10대입니다.")
+        self.assertEqual(result["attribution"], [])
+        self.assertEqual(result["diagnostics"]["tool_rag_policy"], "tool_only")
+        self.assertEqual(result["diagnostics"]["tool_result_statuses"], ["success"])
 
-    # 2. Router
-    ctx.bound_llm.invoke.return_value = AIMessage(
-        content="", 
-        tool_calls=[{"name": "open_usage_prediction_page", "args": {"user_question_context": "수명"}, "id": "nav_1"}]
-    )
+    def test_tool_and_procedure_question_uses_tool_result_and_rag_context(self):
+        vectordb = MagicMock(name="vectordb")
+        fake_tool = MagicMock(name="get_item_detail_info")
+        fake_tool.invoke.return_value = json.dumps(
+            {"results": [{"g2b_name": "노트북", "status": "운용"}]},
+            ensure_ascii=False,
+        )
+        docs = [
+            (
+                _doc(
+                    "manual-1",
+                    content="불용 기준은 사용 불가 물품을 대상으로 합니다.",
+                    category="물품 불용 관리",
+                    chapter="불용",
+                ),
+                0.12,
+            ),
+            (
+                _doc(
+                    "manual-2",
+                    content="불용 절차는 신청 후 확정 흐름을 따릅니다.",
+                    category="물품 불용 관리",
+                    chapter="불용",
+                ),
+                0.14,
+            ),
+        ]
+        self.tool_llm.invoke.return_value = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "get_item_detail_info",
+                    "args": {"asset_name": "노트북"},
+                    "id": "call-1",
+                }
+            ],
+        )
+        self.base_llm.invoke.return_value = AIMessage(
+            content="노트북은 운용 중이며, 불용 절차는 다음과 같습니다."
+        )
 
-    # 3. Tool 결과 (Navigate Action)
-    mock_nav_tool.invoke.return_value = json.dumps({
-        "action": "navigate",
-        "target_url": "https://univ-frontend.com/ai-prediction",
-        "guide_msg": "이동합니다"
-    }, ensure_ascii=False)
+        with (
+            patch.object(chain, "USE_RERANKING", False),
+            patch.object(chain, "TOOL_MAP", {"get_item_detail_info": fake_tool}),
+            patch.object(chain, "classify_question") as classify_mock,
+            patch.object(chain, "refine_query", return_value="노트북 불용 절차"),
+            patch.object(chain, "retrieve_candidate_docs", return_value=docs) as retrieve_mock,
+            patch.object(chain, "filter_retrieved_docs", return_value=docs),
+        ):
+            result = run_rag_chain(self.base_llm, vectordb, "노트북 상태 조회하고 불용 절차도 알려줘")
 
-    # 4. 실행
-    result = run_rag_chain(ctx.base_llm, ctx.vectordb, "수명 예측해줘")
-
-    # 5. 검증
-    assert result["action"] == "navigate"
-    assert "https://univ-frontend.com/ai-prediction" in result["target_url"]
-    
-    # - 페이지 이동 시에는 Generator(답변생성) 단계 건너뜀
-    ctx.base_llm.invoke.assert_not_called()
-
-
-@patch("rag.chain.query_refinement_chain")
-@patch("rag.chain.question_classifier_chain")
-@patch("rag.chain.get_item_detail_info")
-def test_multiple_tool_calls(mock_refiner, mock_classifier, mock_tool_func, mock_dependencies):
-    """[Scenario] 다중 도구 호출 (A도 찾고 B도 찾아줘)"""
-    
-    ctx = mock_dependencies
-
-    # 1. 사전 단계 Mock 설정
-    # (순서에 맞게 인자명을 수정했으므로, 이제 정확한 객체에 설정이 들어갑니다)
-    mock_classifier.invoke.return_value = {"category": "search"}
-    mock_refiner.invoke.return_value = "A랑 B 찾아"
-
-    # 2. Router 설정: 도구를 2번 호출하도록 리스트 구성
-    tool_calls = [
-        {"name": "get_item_detail_info", "args": {"asset_name": "A"}, "id": "call_1"},
-        {"name": "get_item_detail_info", "args": {"asset_name": "B"}, "id": "call_2"}
-    ]
-    
-    # bound_llm이 'tool_calls'가 담긴 메시지를 반환하게 함
-    ctx.bound_llm.invoke.return_value = AIMessage(content="", tool_calls=tool_calls)
-
-    # 3. Tool 결과 설정
-    # 도구가 실행될 때마다 내뱉을 결과 (여기선 둘 다 성공했다고 가정)
-    mock_tool_func.invoke.return_value = json.dumps({"status": "ok", "msg": "찾았음"})
-    
-    # 4. 최종 답변 LLM 설정
-    # 도구 결과를 다 모아서 최종적으로 할 말
-    ctx.base_llm.invoke.return_value = AIMessage(content="A와 B 모두 찾아서 완료했습니다.")
-
-    # 5. 실행
-    from rag.chain import run_rag_chain # 함수 임포트
-    run_rag_chain(ctx.base_llm, ctx.vectordb, "A랑 B 찾아")
-
-    # 6. 검증 (Assert)
-    # 정말로 도구 함수(mock_tool_func)가 2번 실행되었는지 확인
-    assert mock_tool_func.invoke.call_count == 2
-
-
-@patch("rag.chain.query_refinement_chain")
-@patch("rag.chain.question_classifier_chain")
-@patch("rag.chain.get_item_detail_info")
-def test_tool_error_handling_by_llm(mock_refiner, mock_classifier, mock_tool_func, mock_dependencies, caplog):
-    """
-    [Scenario] 도구 실행 중 에러 발생 -> LLM이 에러를 인지하고 답변 -> RAG 스킵
-    """
-    ctx = mock_dependencies
-
-    # ------------------------------------------------------------------
-    # 1. 사전 단계 Mock (순서 바뀐 인자에 맞춰 정확히 설정)
-    # ------------------------------------------------------------------
-    mock_classifier.invoke.return_value = {"category": "search"}
-    mock_refiner.invoke.return_value = "검색해줘"
-
-    # ------------------------------------------------------------------
-    # 2. Router: 에러가 발생할 도구 호출 지시
-    # ------------------------------------------------------------------
-    ctx.bound_llm.invoke.return_value = AIMessage(
-        content="", 
-        tool_calls=[{
-            "name": "get_item_detail_info", 
-            "args": {"asset_name": "Error"}, 
-            "id": "err_1"
-        }]
-    )
-
-    # ------------------------------------------------------------------
-    # 3. Tool에서 예외 발생 설정 (핵심)
-    # ------------------------------------------------------------------
-    error_message = "API Timeout"
-    # 도구를 실행하면 무조건 예외가 터지도록 설정
-    mock_tool_func.invoke.side_effect = Exception(error_message)
-
-    # ------------------------------------------------------------------
-    # 4. Generator (최종 답변)
-    # ------------------------------------------------------------------
-    # LLM은 'Tool Message'에 담긴 에러 로그를 보고 사용자에게 상황을 설명
-    ctx.base_llm.invoke.return_value = AIMessage(content="조회 중에 오류가 발생했습니다.")
-
-    # ------------------------------------------------------------------
-    # 5. 실행 (로그 캡처 포함)
-    # ------------------------------------------------------------------
-    from rag.chain import run_rag_chain
-    
-    # 에러 로그를 확인해야 하므로 로그 레벨을 ERROR로 설정
-    with caplog.at_level(logging.ERROR):
-        result = run_rag_chain(ctx.base_llm, ctx.vectordb, "검색해줘")
-
-    # ------------------------------------------------------------------
-    # 6. 검증
-    # ------------------------------------------------------------------
-    
-    # (1) 도구 실행 시도가 있었으므로(비록 실패했지만), RAG 검색은 호출되지 않아야 함
-    ctx.retriever.invoke.assert_not_called()
-    
-    # (2) 사용자에게는 LLM이 생성한 안내 메시지가 나가야 함
-    # (주의: result가 문자열인지 딕셔너리인지 실제 리턴 타입에 맞춰 확인 필요)
-    if isinstance(result, dict):
-        assert result["answer"] == "조회 중에 오류가 발생했습니다."
-    else:
-        assert str(result) == "조회 중에 오류가 발생했습니다."
-
-    # (3) 로그에 실제 에러 메시지("API Timeout")가 찍혔는지 확인
-    # (우리가 코드에서 logger.error(f"... {e}") 처럼 찍었을 것이므로)
-    assert error_message in caplog.text
+        classify_mock.assert_not_called()
+        retrieve_mock.assert_called_once()
+        self.assertEqual(result["answer"], "노트북은 운용 중이며, 불용 절차는 다음과 같습니다.")
+        self.assertEqual(result["diagnostics"]["classification"], "NEED_RAG")
+        self.assertEqual(result["diagnostics"]["tool_rag_policy"], "mixed_with_rag_context")
+        self.assertEqual(result["diagnostics"]["tool_result_statuses"], ["success"])
+        final_prompt = self.base_llm.invoke.call_args[0][0][0].content
+        self.assertIn("[도구 조회 결과]", final_prompt)
+        self.assertIn("[참고 자료]", final_prompt)
+        self.assertIn("불용 기준은 사용 불가 물품을 대상으로 합니다.", final_prompt)
 
 
-@patch("rag.chain.query_refinement_chain")
-@patch("rag.chain.question_classifier_chain")
-def test_fallback_on_unknown_tool(mock_classifier, mock_refiner, caplog):
-    """
-    모르는 도구나 애매한 요청이 들어왔을 때, 
-    RAG(검색) 모드로 안전하게 넘어가는지(Fallback) 테스트
-    """
-    
-    # ---------------------------------------------------------------
-    # 1. [핵심 수정] Mock 객체에게 '행동 요령(Return Value)' 입력하기
-    # ---------------------------------------------------------------
-    
-    # (1) 분류기(Classifier)가 '이상한 도구'나 '모호한 값'을 뱉는 상황 연출
-    # 실제 코드가 .invoke()를 호출하므로, .invoke.return_value를 설정해야 함!
-    mock_classifier.invoke.return_value = {
-        "intent": "TOOL",
-        "tool_name": "unknown_tool_xyz", # 없는 도구 이름
-        "param": {}
-    }
+class TestRoutingHelpers(unittest.TestCase):
+    def test_retrieve_candidate_docs_uses_role_specific_retrieve_docs(self):
+        vectordb = MagicMock(name="vectordb")
+        qa_doc = _doc("qa-1", doc_type="qa")
+        manual_doc = _doc("manual-1", doc_type="manual_chunk")
+        faq_doc = _doc("faq-1", doc_type="faq", source="faq")
 
-    # (2) 혹은, 분류기가 에러를 뱉어서 RAG로 넘어가는지 테스트하고 싶다면?
-    # mock_classifier.invoke.side_effect = Exception("Classification Error")
+        def fake_retrieve_docs(**kwargs):
+            doc_type = kwargs["metadata_filter"]["doc_type"]
+            if doc_type == "qa":
+                return [(qa_doc, 0.20)]
+            if doc_type == "manual_chunk":
+                return [(manual_doc, 0.10)]
+            return [(faq_doc, 0.15)]
 
-    # (3) 정제 체인(Refiner)은 정상적으로 질문을 다듬어준다고 가정
-    mock_refiner.invoke.return_value = "정제된 검색 질문"
+        with patch.object(chain, "retrieve_docs", side_effect=fake_retrieve_docs) as retrieve_docs_mock:
+            results = chain.retrieve_candidate_docs(
+                vectordb=vectordb,
+                user_query="원 질문",
+                refined_query="정제 질문",
+                top_k=7,
+                search_mode="refined",
+            )
 
-    # ---------------------------------------------------------------
-    # 2. 테스트 대상 함수 실행
-    # ---------------------------------------------------------------
-    user_query = "이상한 기능 실행해줘"
-    result = run_rag_chain(user_query)
+        retrieve_docs_mock.assert_has_calls(
+            [
+                call(
+                    vectordb=vectordb,
+                    query="정제 질문",
+                    top_k=7,
+                    metadata_filter={"doc_type": "qa"},
+                    use_hybrid=chain.USE_HYBRID_RETRIEVAL,
+                ),
+                call(
+                    vectordb=vectordb,
+                    query="정제 질문",
+                    top_k=7,
+                    metadata_filter={"doc_type": "manual_chunk"},
+                    use_hybrid=chain.USE_HYBRID_RETRIEVAL,
+                ),
+                call(
+                    vectordb=vectordb,
+                    query="정제 질문",
+                    top_k=chain.FAQ_RETRIEVAL_LIMIT,
+                    metadata_filter={"doc_type": "faq"},
+                    use_hybrid=chain.USE_HYBRID_RETRIEVAL,
+                ),
+            ]
+        )
+        self.assertEqual([doc.metadata["doc_id"] for doc, _score in results], ["manual-1", "faq-1", "qa-1"])
 
-    # ---------------------------------------------------------------
-    # 3. 결과 검증 (Assert)
-    # ---------------------------------------------------------------
-    
-    # 도구가 없거나 이상하므로, 시스템은 'RAG(검색)'나 '일반 대화'로 빠져야 함.
-    # 로그에 "Fallback"이나 "전환" 같은 메시지가 찍혔는지 확인
-    assert "Fallback" in caplog.text or "RAG로 전환" in caplog.text
-    
-    # 혹은 결과값이 에러 없이 텍스트로 잘 나왔는지 확인
-    assert isinstance(result, dict)
-    assert "answer" in result
+    def test_classify_question_parses_allowed_labels_and_defaults_to_need_rag(self):
+        fake_chain = MagicMock()
+
+        with patch.object(chain, "_build_text_chain", return_value=fake_chain):
+            fake_chain.invoke.return_value = "NO_RAG"
+            self.assertEqual(chain.classify_question(MagicMock(), "안녕"), "NO_RAG")
+
+            fake_chain.invoke.return_value = "NEED_RAG"
+            self.assertEqual(chain.classify_question(MagicMock(), "반납 절차 알려줘"), "NEED_RAG")
+
+            fake_chain.invoke.return_value = '{"classification": "NO_RAG"}'
+            self.assertEqual(chain.classify_question(MagicMock(), "고마워"), "NO_RAG")
+
+            fake_chain.invoke.return_value = "판단: NO_RAG"
+            self.assertEqual(chain.classify_question(MagicMock(), "안녕"), "NEED_RAG")
+
+            fake_chain.invoke.return_value = "잘 모르겠습니다"
+            self.assertEqual(chain.classify_question(MagicMock(), "불용 기준 알려줘"), "NEED_RAG")
+
+    def test_refine_query_returns_first_nonempty_line_and_falls_back(self):
+        fake_chain = MagicMock()
+
+        with patch.object(chain, "_build_text_chain", return_value=fake_chain):
+            fake_chain.invoke.return_value = "```\n물품 반납 절차\n추가 설명\n```"
+            self.assertEqual(chain.refine_query(MagicMock(), "반납 어떻게 해?"), "물품 반납 절차")
+
+            fake_chain.invoke.return_value = "물품 조회 방법"
+            self.assertEqual(
+                chain.refine_query(MagicMock(), "자산번호 A-12345 반납 절차 알려줘"),
+                "물품 조회 방법 반납 자산번호 A-12345",
+            )
+
+            fake_chain.invoke.return_value = ""
+            self.assertEqual(chain.refine_query(MagicMock(), "원 질문"), "원 질문")
+
+            fake_chain.invoke.side_effect = RuntimeError("llm down")
+            self.assertEqual(chain.refine_query(MagicMock(), "원 질문"), "원 질문")
+
+    def test_context_sort_prefers_manual_and_faq_over_qa(self):
+        docs = [
+            _doc("qa-1", doc_type="qa"),
+            _doc("manual-1", doc_type="manual_chunk"),
+            _doc("faq-1", doc_type="faq", source="faq"),
+        ]
+
+        sorted_docs = chain._sort_docs_for_context(docs)
+
+        self.assertEqual([doc.metadata["doc_id"] for doc in sorted_docs], ["manual-1", "faq-1", "qa-1"])
+
+    def test_filter_retrieved_docs_abstains_when_minimum_evidence_is_missing(self):
+        docs = [(_doc("only-doc"), 0.10)]
+
+        self.assertEqual(chain.filter_retrieved_docs(docs, threshold=0.95, strategy="fixed"), [])
+
+
+if __name__ == "__main__":
+    unittest.main()
