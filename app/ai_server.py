@@ -1,8 +1,8 @@
-import json
+﻿import json
 import os
 import joblib
-import numpy as np
 import pandas as pd
+import numpy as np
 import math
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -17,8 +17,33 @@ import uuid
 # [1] 설정 영역
 # ==========================================
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-AI_MODEL = "gpt-4o" 
+BASE_DIR = Path(__file__).resolve().parent
+ENV_PATH = BASE_DIR / ".env"
+
+
+def load_local_env(path: Path = ENV_PATH):
+    if not path.exists():
+        return
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_local_env()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+AI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+if not OPENAI_API_KEY:
+    print("⚠️ OPENAI_API_KEY가 설정되지 않았습니다. .env 파일 또는 환경변수를 확인하세요.")
 
 # ==========================================
 # [1.5] 임시 데이터베이스 (인메모리 DB)
@@ -32,101 +57,69 @@ predictions_db = {}
 
 app = FastAPI(
     title="AI Team Server",
-    description="백엔드 연동용 챗봇 및 통계 예측 API (FastAPI + OpenAI + Random Forest)",
-    version="3.4.1"
+    description="백엔드 연동용 챗봇 및 조달 권고 API (FastAPI + OpenAI + CatBoost + LightGBM)",
+    version="4.0.0"
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RUNS_DIR = PROJECT_ROOT / "ai_model" / "experiments" / "runs"
-MODEL_PATH = Path(os.getenv("AI_MODEL_PATH", PROJECT_ROOT / "ai_model" / "saved_models" / "current" / "model.pkl"))
-MODEL_META_PATH = Path(os.getenv("AI_MODEL_META_PATH", MODEL_PATH.with_name("model_meta.json")))
-CSV_PATH = Path(os.getenv("AI_DATA_PATH", PROJECT_ROOT / "dataset" / "create_data" / "data_ml" / "phase4_training_data.csv"))
-FALLBACK_MODEL_PATH = PROJECT_ROOT / "ai_model" / "saved_models" / "random_forest" / "rf_final_model.pkl"
+LIFE_MODEL_PATH = BASE_DIR / "asset_life_model.pkl"
+MONTHLY_DEMAND_MODEL_PATH = BASE_DIR / "monthly_demand_model.pkl"
+CSV_PATH = BASE_DIR / "phase4_training_data.csv"
 
-DEFAULT_FEATURES = [
-    '내용연수', '취득금액', '부서가혹도', '가격민감도', '장비중요도',
-    'G2B목록명_Code', '물품분류명_Code', '운용부서코드_Code', '캠퍼스_Code'
+LIFE_FEATURES = [
+    "내용연수",
+    "부서가혹도",
+    "월평균사용시간",
+    "사용강도지수",
+    "누적점검수리횟수",
+    "누적수리횟수",
+    "최근2년수리횟수",
+    "마지막수리후경과개월",
+    "취득금액대비수리비율",
+    "최대장애심각도",
+    "부서예산등급_Code",
+    "부서교체성향",
+    "G2B목록명_Code",
+    "물품분류명_Code",
+    "운용부서코드_Code",
 ]
 
-rf_model = None
-df = None
-model_meta = {}
-model_features = DEFAULT_FEATURES.copy()
-
-DEFAULT_MONTHLY_DEMAND_FEATURES = [
+MONTHLY_DEMAND_FEATURES = [
     "trend",
     "month",
     "month_sin",
     "month_cos",
-    "lag_1",
-    "lag_2",
-    "lag_3",
-    "lag_6",
     "lag_12",
-    "rolling_mean_3",
     "rolling_mean_6",
     "rolling_std_6",
 ]
 
+life_model = None
 monthly_demand_model = None
-monthly_demand_features = DEFAULT_MONTHLY_DEMAND_FEATURES.copy()
+df = None
 
 
-def find_latest_run_artifact(run_suffix: str, filename: str) -> Path | None:
-    candidates = []
-    if RUNS_DIR.exists():
-        for run_dir in RUNS_DIR.glob(f"*_{run_suffix}"):
-            candidate = run_dir / filename
-            if candidate.exists():
-                candidates.append(candidate)
-    if not candidates:
+def unwrap_model(model):
+    return getattr(model, "best_estimator_", model)
+
+
+def load_model(path: Path, label: str):
+    if not path.exists():
+        print(f"❌ {label} 모델 파일 없음: {path}")
         return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
 
-
-def find_latest_monthly_model_artifact() -> Path | None:
-    candidates = []
-    for run_suffix, filename in [
-        ("stage3_monthly_model_search", "monthly_demand_model.pkl"),
-        ("stage3_timeseries_demand", "xgboost_lag_model.pkl"),
-    ]:
-        artifact = find_latest_run_artifact(run_suffix, filename)
-        if artifact is not None:
-            candidates.append(artifact)
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
-
-# 모델 로딩
-if not MODEL_PATH.exists() and FALLBACK_MODEL_PATH.exists():
-    MODEL_PATH = FALLBACK_MODEL_PATH
-    MODEL_META_PATH = MODEL_PATH.with_name("model_meta.json")
-
-if MODEL_PATH.exists():
     try:
-        rf_model = joblib.load(MODEL_PATH)
-        if MODEL_META_PATH.exists():
-            with open(MODEL_META_PATH, "r", encoding="utf-8") as f:
-                model_meta = json.load(f)
-            model_features = model_meta.get("features", DEFAULT_FEATURES)
-        print(f"✅ AI 모델 로딩 성공! ({MODEL_PATH})")
+        model = unwrap_model(joblib.load(path))
+        print(f"✅ {label} 모델 로딩 성공: {path.name}")
+        return model
     except Exception as e:
-        print(f"❌ 모델 로딩 실패: {e}")
+        print(f"❌ {label} 모델 로딩 실패: {e}")
+        return None
+
+
+life_model = load_model(LIFE_MODEL_PATH, "자산 수명")
+monthly_demand_model = load_model(MONTHLY_DEMAND_MODEL_PATH, "월별 수요")
 
 # 데이터 파일 로딩
-MONTHLY_MODEL_PATH = find_latest_monthly_model_artifact()
-if MONTHLY_MODEL_PATH is not None and MONTHLY_MODEL_PATH.exists():
-    try:
-        monthly_demand_model = joblib.load(MONTHLY_MODEL_PATH)
-        monthly_meta_path = MONTHLY_MODEL_PATH.with_name("monthly_model_meta.json")
-        if monthly_meta_path.exists():
-            with open(monthly_meta_path, "r", encoding="utf-8") as f:
-                monthly_meta = json.load(f)
-            monthly_demand_features = monthly_meta.get("features", DEFAULT_MONTHLY_DEMAND_FEATURES)
-        print(f"✅ 월별 수요 모델 로딩 성공! ({MONTHLY_MODEL_PATH})")
-    except Exception as e:
-        print(f"⚠️ 월별 수요 모델 로딩 실패: {e}")
-
 if CSV_PATH.exists():
     try:
         try:
@@ -134,18 +127,18 @@ if CSV_PATH.exists():
         except UnicodeDecodeError:
             df = pd.read_csv(CSV_PATH, encoding="cp949")
 
-        # Phase 4에서 target encoding 컬럼이 이미 만들어진 경우 보존한다.
-        # 구버전 CSV만 있을 때에만 fallback category code를 만든다.
-        fallback_code_cols = {
-            'G2B목록명_Code': 'G2B목록명',
-            '물품분류명_Code': '물품분류명',
-            '운용부서코드_Code': '운용부서코드',
-            '캠퍼스_Code': '캠퍼스',
-        }
-        for code_col, source_col in fallback_code_cols.items():
-            if code_col not in df.columns and source_col in df.columns:
-                df[code_col] = df[source_col].astype('category').cat.codes
-        print(f"✅ 학습용 데이터 로딩 완료! ({CSV_PATH})")
+        code_columns = [
+            ("G2B목록명", "G2B목록명_Code"),
+            ("물품분류명", "물품분류명_Code"),
+            ("운용부서코드", "운용부서코드_Code"),
+            ("캠퍼스", "캠퍼스_Code"),
+            ("부서예산등급", "부서예산등급_Code"),
+        ]
+        for src_col, code_col in code_columns:
+            if code_col not in df.columns and src_col in df.columns:
+                df[code_col] = df[src_col].astype("category").cat.codes
+
+        print("✅ 학습용 데이터 로딩 완료!")
     except Exception as e:
         print(f"❌ 데이터 로딩 실패: {e}")
 
@@ -158,7 +151,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
+client = openai.OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # --- Request 스키마 정의 ---
 class ChatRequest(BaseModel):
@@ -205,119 +198,268 @@ def calculate_sigma_d(counts_list: list):
     variance = sum((x - mean) ** 2 for x in counts_list) / (n - 1)
     return math.sqrt(variance)
 
-def build_model_input(target_df: pd.DataFrame) -> pd.DataFrame:
-    """model_meta.json의 feature 순서에 맞춰 서버 예측 입력을 만든다."""
-    global df
-    prepared = target_df.copy()
-    for feature in model_features:
-        if feature not in prepared.columns:
-            prepared[feature] = 0
-        prepared[feature] = pd.to_numeric(prepared[feature], errors="coerce")
-        if prepared[feature].isna().any():
-            if df is not None and feature in df.columns:
-                fallback = pd.to_numeric(df[feature], errors="coerce").median()
-            else:
-                fallback = 0
-            if pd.isna(fallback):
-                fallback = 0
-            prepared[feature] = prepared[feature].fillna(fallback)
-    return prepared[model_features]
+
+def get_model_features(model, fallback_features: list):
+    if model is None:
+        return fallback_features
+    if hasattr(model, "feature_names_in_"):
+        return list(model.feature_names_in_)
+    if hasattr(model, "feature_names_") and getattr(model, "feature_names_", None):
+        return list(model.feature_names_)
+    if hasattr(model, "feature_name_") and getattr(model, "feature_name_", None):
+        return list(model.feature_name_)
+    if hasattr(model, "booster_"):
+        return list(model.booster_.feature_name())
+    return fallback_features
 
 
+def require_columns(dataframe: pd.DataFrame, columns: list, label: str):
+    missing = [col for col in columns if col not in dataframe.columns]
+    if missing:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{label} 입력 컬럼이 데이터에 없습니다: {missing}"
+        )
 
-def make_event_date(df: pd.DataFrame) -> pd.Series:
-    disuse_date = pd.to_datetime(df["불용일자"], errors="coerce")
-    fallback_date = pd.to_datetime(df["취득일자"], errors="coerce") + pd.to_timedelta(
-        (pd.to_numeric(df["실제수명"], errors="coerce").fillna(0) * 365.25).round().astype("Int64"),
-        unit="D",
+
+def get_semester_period(year: int, semester: str):
+    if semester in ["1", "1학기"]:
+        return datetime(year, 3, 2), datetime(year, 6, 20)
+    if semester in ["여름", "여름방학", "summer"]:
+        return datetime(year, 6, 21), datetime(year, 8, 31)
+    if semester in ["2", "2학기"]:
+        return datetime(year, 9, 1), datetime(year, 12, 20)
+    if semester in ["겨울", "겨울방학", "winter"]:
+        return datetime(year, 12, 21), datetime(year + 1, 2, 28)
+    return datetime(year, 1, 1), datetime(year, 12, 31)
+
+
+def filter_current_assets(dataframe: pd.DataFrame):
+    if "데이터세트구분" in dataframe.columns:
+        prediction_df = dataframe[
+            dataframe["데이터세트구분"].astype(str).str.lower() == "prediction"
+        ].copy()
+        if not prediction_df.empty:
+            return prediction_df
+
+    if "학습데이터여부" in dataframe.columns:
+        prediction_df = dataframe[
+            dataframe["학습데이터여부"].astype(str).str.upper() == "N"
+        ].copy()
+        if not prediction_df.empty:
+            return prediction_df
+
+    return dataframe.copy()
+
+
+def add_lead_time_columns(dataframe: pd.DataFrame):
+    if "취득금액" not in dataframe.columns:
+        dataframe["리드타임등급"] = 0
+        dataframe["등급점수"] = 20.0
+        dataframe["sqrt_L"] = 0.48
+        dataframe["리드타임_일"] = 7
+        return dataframe
+
+    lead_values = dataframe["취득금액"].fillna(0).apply(get_lead_time_info)
+    dataframe["리드타임등급"], dataframe["등급점수"], dataframe["sqrt_L"], dataframe["리드타임_일"] = zip(*lead_values)
+    return dataframe
+
+
+def add_asset_life_predictions(dataframe: pd.DataFrame):
+    life_features = get_model_features(life_model, LIFE_FEATURES)
+    require_columns(dataframe, life_features, "자산 수명 모델")
+
+    input_data = dataframe[life_features].copy()
+    for col in input_data.columns:
+        input_data[col] = pd.to_numeric(input_data[col], errors="coerce").fillna(0)
+
+    predicted_total_life_months = pd.Series(
+        life_model.predict(input_data),
+        index=dataframe.index
+    ).clip(lower=1)
+
+    if "운용연차" in dataframe.columns:
+        operation_years = pd.to_numeric(dataframe["운용연차"], errors="coerce").fillna(0)
+    elif "취득일자" in dataframe.columns:
+        acquired_at = pd.to_datetime(dataframe["취득일자"], errors="coerce")
+        operation_years = ((pd.Timestamp.now() - acquired_at).dt.days / 365.25).fillna(0)
+    else:
+        operation_years = pd.Series(0, index=dataframe.index)
+
+    operation_months = operation_years * 12
+    predicted_remaining_months = (predicted_total_life_months - operation_months).clip(lower=0)
+
+    dataframe["예측총수명_개월"] = predicted_total_life_months
+    dataframe["예측잔여수명"] = predicted_remaining_months
+    dataframe["AI예측고장일"] = pd.Timestamp.now() + pd.to_timedelta(
+        predicted_remaining_months * 30.4,
+        unit="D"
     )
-    return disuse_date.fillna(fallback_date)
+    dataframe["고장예상월기간"] = dataframe["AI예측고장일"].dt.to_period("M")
+    return dataframe
 
 
-def build_monthly_history_series(scope_df: pd.DataFrame) -> pd.DataFrame:
-    historical = scope_df[scope_df["학습데이터여부"].eq("Y")].copy()
-    if historical.empty:
-        return pd.DataFrame()
+def build_monthly_history(history_source_df: pd.DataFrame):
+    if "불용일자" not in history_source_df.columns:
+        return pd.Series(dtype=float)
 
-    historical["event_date"] = make_event_date(historical)
-    historical = historical.dropna(subset=["event_date"])
-    if historical.empty:
-        return pd.DataFrame()
+    actual_df = history_source_df.copy()
+    if "학습데이터여부" in actual_df.columns:
+        actual_df = actual_df[actual_df["학습데이터여부"].astype(str).str.upper() == "Y"]
 
-    historical["event_month"] = historical["event_date"].dt.to_period("M").dt.to_timestamp()
-    monthly = historical.groupby("event_month").size().rename("actual_count").reset_index()
-    full_index = pd.date_range(monthly["event_month"].min(), monthly["event_month"].max(), freq="MS")
-    monthly = monthly.set_index("event_month").reindex(full_index, fill_value=0).reset_index()
-    monthly = monthly.rename(columns={"index": "event_month"})
-    monthly["month"] = monthly["event_month"].dt.month
-    monthly["trend"] = np.arange(len(monthly))
-    monthly["month_sin"] = np.sin(2 * np.pi * monthly["month"] / 12)
-    monthly["month_cos"] = np.cos(2 * np.pi * monthly["month"] / 12)
-    return monthly
+    dates = pd.to_datetime(actual_df["불용일자"], errors="coerce").dropna()
+    if dates.empty:
+        return pd.Series(dtype=float)
+
+    return dates.dt.to_period("M").value_counts().sort_index().astype(float)
 
 
-def add_monthly_lag_features(monthly: pd.DataFrame) -> pd.DataFrame:
-    out = monthly.copy()
-    for lag in [1, 2, 3, 6, 12]:
-        out[f"lag_{lag}"] = out["actual_count"].shift(lag)
-    out["rolling_mean_3"] = out["actual_count"].shift(1).rolling(3).mean()
-    out["rolling_mean_6"] = out["actual_count"].shift(1).rolling(6).mean()
-    out["rolling_std_6"] = out["actual_count"].shift(1).rolling(6).std()
-    return out
+def predict_monthly_demand(history: pd.Series, end_period: pd.Period):
+    monthly_features = get_model_features(monthly_demand_model, MONTHLY_DEMAND_FEATURES)
+
+    if history.empty:
+        base_period = pd.Timestamp.now().to_period("M") - 24
+        history = pd.Series(
+            0.0,
+            index=pd.period_range(base_period, pd.Timestamp.now().to_period("M"), freq="M")
+        )
+    else:
+        history = history.sort_index()
+
+    counts = history.to_dict()
+    base_period = history.index.min()
+    current_period = history.index.max() + 1
+
+    while current_period <= end_period:
+        last6 = [float(counts.get(current_period - i, 0.0)) for i in range(1, 7)]
+        row = {
+            "trend": (current_period.year - base_period.year) * 12 + current_period.month - base_period.month + 1,
+            "month": current_period.month,
+            "month_sin": math.sin(2 * math.pi * current_period.month / 12),
+            "month_cos": math.cos(2 * math.pi * current_period.month / 12),
+            "lag_12": float(counts.get(current_period - 12, 0.0)),
+            "rolling_mean_6": float(np.mean(last6)),
+            "rolling_std_6": float(np.std(last6, ddof=1)) if len(last6) > 1 else 0.0,
+        }
+        input_data = pd.DataFrame([row], columns=monthly_features)
+        predicted_qty = float(monthly_demand_model.predict(input_data)[0])
+        counts[current_period] = max(0, int(round(predicted_qty)))
+        current_period += 1
+
+    return counts
 
 
-def forecast_scope_monthly_demand(scope_df: pd.DataFrame, start_date: datetime, end_date: datetime):
-    if monthly_demand_model is None:
-        return None, None, None
+def period_month_count(period_counts: dict, month: int):
+    return sum(int(value) for period, value in period_counts.items() if period.month == month)
 
-    monthly = build_monthly_history_series(scope_df)
-    if monthly.empty or len(monthly) < 6:
-        return None, None, None
 
-    history_feat = add_monthly_lag_features(monthly)
-    for feature in monthly_demand_features:
-        if feature not in history_feat.columns:
-            history_feat[feature] = np.nan
-    fill_values = history_feat[monthly_demand_features].median(numeric_only=True).fillna(0)
-    actual_lookup = {pd.Timestamp(row.event_month): int(row.actual_count) for row in monthly.itertuples()}
-    working_counts = monthly["actual_count"].astype(float).tolist()
-    target_month_dates = list(pd.date_range(start_date, end_date, freq="MS"))
-    forecast_map = {}
+def average_datetime(series: pd.Series, fallback: datetime):
+    parsed = pd.to_datetime(series, errors="coerce").dropna()
+    if parsed.empty:
+        return fallback
+    return parsed.mean().to_pydatetime()
 
-    for month_dt in target_month_dates:
-        month_key = pd.Timestamp(month_dt.to_period("M").to_timestamp())
-        if month_key in actual_lookup:
-            forecast_map[month_dt.month] = int(actual_lookup[month_key])
-            continue
 
-        feat_row = pd.DataFrame([
-            {
-                "trend": len(working_counts),
-                "month": month_dt.month,
-                "month_sin": np.sin(2 * np.pi * month_dt.month / 12),
-                "month_cos": np.cos(2 * np.pi * month_dt.month / 12),
-                "lag_1": working_counts[-1] if len(working_counts) >= 1 else np.nan,
-                "lag_2": working_counts[-2] if len(working_counts) >= 2 else np.nan,
-                "lag_3": working_counts[-3] if len(working_counts) >= 3 else np.nan,
-                "lag_6": working_counts[-6] if len(working_counts) >= 6 else np.nan,
-                "lag_12": working_counts[-12] if len(working_counts) >= 12 else np.nan,
-                "rolling_mean_3": float(np.mean(working_counts[-3:])) if len(working_counts) >= 3 else np.nan,
-                "rolling_mean_6": float(np.mean(working_counts[-6:])) if len(working_counts) >= 6 else np.nan,
-                "rolling_std_6": float(np.std(working_counts[-6:], ddof=1)) if len(working_counts) >= 6 else np.nan,
-            }
-        ])
-        feat_row = feat_row[monthly_demand_features].fillna(fill_values)
-        pred_count = float(monthly_demand_model.predict(feat_row)[0])
-        pred_count = max(0.0, pred_count)
-        forecast_map[month_dt.month] = int(round(pred_count))
-        working_counts.append(pred_count)
+def is_navigation_request(query: str) -> bool:
+    q = query.replace(" ", "")
 
-    if not forecast_map:
-        return None, None, None
+    strong_markers = [
+        "바로가기",
+        "이동",
+        "열어줘",
+        "열어",
+        "접속",
+        "들어가",
+        "링크",
+        "가줘",
+        "보여줘",
+    ]
+    if any(marker in q for marker in strong_markers):
+        return True
 
-    peak_month = max(forecast_map.keys(), key=lambda m: forecast_map.get(m, 0))
-    return forecast_map, peak_month, target_month_dates
+    location_markers = [
+        "어디",
+        "어디서",
+        "위치",
+        "어느메뉴",
+        "어떤메뉴",
+        "무슨메뉴",
+    ]
+    if any(marker in q for marker in location_markers):
+        return True
 
+    action_markers = [
+        "등록하고싶",
+        "등록하러",
+        "등록해줘",
+        "조회하고싶",
+        "조회하러",
+        "조회해줘",
+        "관리하고싶",
+        "관리하러",
+        "처리하고싶",
+        "처리하러",
+    ]
+    return any(marker in q for marker in action_markers)
+
+
+def get_action_button_for_query(query: str):
+    if not is_navigation_request(query):
+        return None
+
+    q = query.replace(" ", "")
+    button_rules = [
+        (["반납"], {"label": "물품 반납 관리 바로가기", "url": "/return-management"}),
+        (["불용"], {"label": "불용 관리 바로가기", "url": "/disposal-management"}),
+        (["처분"], {"label": "처분 관리 바로가기", "url": "/disposal-management"}),
+        (["취득", "자산등록"], {"label": "자산 취득 등록 바로가기", "url": "/acquisition-management"}),
+        (["보유현황", "보유현황조회", "상태"], {"label": "보유현황조회 바로가기", "url": "/status-inquiry"}),
+        (["사용주기", "AI예측"], {"label": "사용주기 AI 예측 바로가기", "url": "/ai-forecast"}),
+    ]
+
+    for keywords, button in button_rules:
+        if any(keyword.replace(" ", "") in q for keyword in keywords):
+            return button
+    return None
+
+
+def suppress_frontend_auto_buttons(reply: str) -> str:
+    replacements = [
+        ("[불용/처분 관리]", "해당 업무 화면"),
+        ("불용/처분 관리", "해당 업무 화면"),
+        ("[물품 불용 관리]", "해당 불용 업무 화면"),
+        ("물품 불용 관리", "해당 불용 업무 화면"),
+        ("[물품 처분 관리]", "해당 처분 업무 화면"),
+        ("물품 처분 관리", "해당 처분 업무 화면"),
+        ("[물품 반납 관리]", "해당 반납 업무 화면"),
+        ("물품 반납 관리", "해당 반납 업무 화면"),
+        ("불용 관리", "불용 업무"),
+        ("처분 관리", "처분 업무"),
+        ("반납 관리", "반납 업무"),
+    ]
+
+    for old, new in replacements:
+        reply = reply.replace(old, new)
+    return reply
+
+
+def build_navigation_reply(action_button: dict) -> str:
+    if action_button["url"] == "/return-management":
+        return (
+            "해당 업무 화면은 [물품 관리] 메뉴의 [물품 운용 관리] 하위에서 이용할 수 있습니다. "
+            "이 페이지에서 등록 목록과 승인 상태를 조회하고, 신규 등록을 시작할 수 있습니다."
+        )
+
+    if action_button["url"] == "/disposal-management":
+        return (
+            "해당 업무 화면은 [물품 관리] 메뉴 하위에서 이용할 수 있습니다. "
+            "이 페이지에서 등록 목록과 승인 상태를 조회하고, 신규 등록을 시작할 수 있습니다."
+        )
+
+    return (
+        "해당 업무 화면에서 관련 목록을 조회하고 필요한 작업을 진행할 수 있습니다. "
+        "아래 바로가기 버튼을 눌러 이동해 주세요."
+    )
 
 REPORT_SYSTEM_PROMPT = """
 당신은 대학 자산 관리 실무자를 돕는 'SCM AI 분석 파트너'입니다.
@@ -439,6 +581,23 @@ async def chat_completions(req: ChatRequest):
                     manual_content = json.dumps(json.load(f), ensure_ascii=False)
         except Exception as e: pass
 
+    # 메뉴 이동 질문은 RAG 답변을 생성하지 않고 바로가기 응답만 한 번 반환한다.
+    # 프론트의 키워드 기반 자동 버튼과 서버 action_buttons가 동시에 뜨는 것을 막기 위함이다.
+    action_button = get_action_button_for_query(req.query)
+    if action_button:
+        ai_reply = build_navigation_reply(action_button)
+        history.append({"role": "assistant", "content": ai_reply, "created_at": current_time})
+        return {
+            "status": "success",
+            "data": {
+                "reply": ai_reply,
+                "action_buttons": [action_button],
+                "references": [],
+                "source_references": refs,
+                "created_at": current_time
+            }
+        }
+
     # 수정 포인트: 보유현황조회 안내 및 메뉴 라우팅 강화
     sys_inst = f"""당신은 대학 물품관리시스템을 돕는 똑똑하고 친절한 AI 챗봇입니다.
     아래 제공된 [매뉴얼 데이터]를 최우선으로 참고하여 답변하세요. 
@@ -464,31 +623,13 @@ async def chat_completions(req: ChatRequest):
 
         history.append({"role": "assistant", "content": ai_reply, "created_at": current_time})
 
-        # 수정 포인트: 질문뿐만 아니라 AI 답변 내용까지 파악하여 관련된 바로가기 버튼을 모두 띄움
-        action_buttons = []
-        q_and_a = req.query + " " + ai_reply
-        
-        if any(w in q_and_a for w in ["반납"]):
-            action_buttons.append({"label": "물품 반납 관리 바로가기", "url": "/return-management"})
-        if any(w in q_and_a for w in ["처분", "불용"]):
-            action_buttons.append({"label": "불용/처분 관리 바로가기", "url": "/disposal-management"})
-        if any(w in q_and_a for w in ["취득", "자산등록"]):
-            action_buttons.append({"label": "자산 취득 등록 바로가기", "url": "/acquisition-management"})
-        if any(w in q_and_a for w in ["보유현황", "보유현황조회", "상태"]):
-            action_buttons.append({"label": "보유현황조회 바로가기", "url": "/status-inquiry"})
-        if any(w in q_and_a for w in ["사용주기", "AI예측", "AI 예측"]):
-            action_buttons.append({"label": "사용주기 AI 예측 바로가기", "url": "/ai-forecast"})
-
-        # 중복된 버튼 제거 (같은 목적지의 버튼이 여러 개 달리는 것 방지)
-        unique_buttons = {btn["label"]: btn for btn in action_buttons}.values()
-        action_buttons = list(unique_buttons)
-
         return {
             "status": "success", 
             "data": {
                 "reply": ai_reply, 
-                "action_buttons": action_buttons, 
-                "references": refs, 
+                "action_buttons": [], 
+                "references": [],
+                "source_references": refs,
                 "created_at": current_time
             }
         }
@@ -498,7 +639,7 @@ async def chat_completions(req: ChatRequest):
 
 @app.post("/api/ai/forecast")
 async def predict_analysis(req: PredictionRequest):
-    if rf_model is None or df is None:
+    if life_model is None or monthly_demand_model is None or df is None:
         return {"status": "error", "message": "모델이나 데이터가 없습니다."}
         
     # 수정 포인트: 분석 조건 필수 입력 방어 코드 추가
@@ -507,12 +648,12 @@ async def predict_analysis(req: PredictionRequest):
         raise HTTPException(status_code=400, detail="분석조건(운용부서, 년도, 학기)을 필수로 입력해주세요.")
 
     try:
-        # 1. 대상 데이터 필터링
-        target_df = df[df['운용부서명'] == cond.dept_name].copy()
+        # 1. 대상 데이터 필터링: 이력 데이터는 월별 수요 모델용, 현재 자산은 수명 모델용으로 분리
+        source_df = df[df['운용부서명'] == cond.dept_name].copy()
         if cond.category and cond.category != "전체":
-            target_df = target_df[target_df['물품분류명'] == cond.category]
+            source_df = source_df[source_df['물품분류명'] == cond.category]
 
-        if target_df.empty:
+        if source_df.empty:
             return {
                 "status": "success", 
                 "data": { 
@@ -523,53 +664,41 @@ async def predict_analysis(req: PredictionRequest):
                 }
             }
 
-        # 2. 파생변수 동적 계산
-        if '취득금액' in target_df.columns:
-            target_df['리드타임등급'], target_df['등급점수'], target_df['sqrt_L'], target_df['리드타임_일'] = zip(*target_df['취득금액'].apply(get_lead_time_info))
-            if '가격민감도' in target_df.columns:
-                target_df['장비중요도'] = (target_df['가격민감도'] * 100 * 0.5) + (target_df['등급점수'] * 0.5)
+        # 2. 현재 보유/예측 대상 자산에 대해 CatBoost 자산 수명 모델 적용
+        target_df = filter_current_assets(source_df)
+        target_df = add_lead_time_columns(target_df)
+        target_df = add_asset_life_predictions(target_df)
 
-        # 3. AI 모델 예측 수행
-        input_data = build_model_input(target_df)
-        target_df['예측수명_월'] = rf_model.predict(input_data)
-        
-        # 4. 고장 예상일 계산
-        # 모델은 총수명(개월)을 예측하므로 현재 운용연차를 뺀 RUL을 사용한다.
-        age_months = pd.to_numeric(target_df.get('운용연차', 0), errors='coerce').fillna(0) * 12
-        target_df['RUL_개월_raw'] = target_df['예측수명_월'] - age_months
-        target_df['RUL_개월'] = target_df['RUL_개월_raw'].clip(lower=0.5)
-        target_df['고장예상일'] = target_df['RUL_개월'].apply(
-            lambda x: datetime.now() + timedelta(days=float(x) * 30.4375)
+        # 3. 요청 기간과 월별 수요 예측값 산출
+        req_year = int(cond.year)
+        start_date, end_date = get_semester_period(req_year, cond.semester)
+        target_periods = pd.period_range(
+            pd.Timestamp(start_date).to_period("M"),
+            pd.Timestamp(end_date).to_period("M"),
+            freq="M"
         )
 
-        req_year = int(cond.year)
-        req_semester = cond.semester
-        
-        # 학기별 날짜 필터링
-        if req_semester in ["1", "1학기"]:      
-            start_date = datetime(req_year, 3, 2)
-            end_date = datetime(req_year, 6, 20)
-        elif req_semester in ["여름", "여름방학", "summer"]: 
-            start_date = datetime(req_year, 6, 21)
-            end_date = datetime(req_year, 8, 31)
-        elif req_semester in ["2", "2학기"]:    
-            start_date = datetime(req_year, 9, 1)
-            end_date = datetime(req_year, 12, 20)
-        elif req_semester in ["겨울", "겨울방학", "winter"]: 
-            start_date = datetime(req_year, 12, 21)
-            end_date = datetime(req_year + 1, 2, 28)
-        else: 
-            start_date = datetime(req_year, 1, 1)
-            end_date = datetime(req_year, 12, 31)
-            
-        filtered_df = target_df[(target_df['고장예상일'] >= start_date) & (target_df['고장예상일'] <= end_date)].copy()
+        filtered_df = target_df[
+            (target_df['AI예측고장일'] >= start_date)
+            & (target_df['AI예측고장일'] <= end_date)
+        ].copy()
 
-        if start_date.year == end_date.year:
-            target_months = list(range(start_date.month, end_date.month + 1))
-        else:
-            target_months = list(range(start_date.month, 13)) + list(range(1, end_date.month + 1))
+        asset_monthly_counts = (
+            filtered_df.groupby("고장예상월기간").size().to_dict()
+            if not filtered_df.empty
+            else {}
+        )
+        monthly_history = build_monthly_history(source_df)
+        monthly_demand_counts = predict_monthly_demand(monthly_history, target_periods.max())
 
-        target_month_dates = list(pd.date_range(start_date, end_date, freq="MS"))
+        # 4. 월별 고장예상수량: 자산 수명 모델의 개별 고장월과 LightGBM 월별 수요를 결합
+        final_monthly_counts = {}
+        for period in target_periods:
+            asset_qty = int(asset_monthly_counts.get(period, 0))
+            demand_qty = int(monthly_demand_counts.get(period, 0))
+            final_monthly_counts[period] = max(asset_qty, demand_qty)
+
+        target_months = sorted({period.month for period in target_periods})
 
         # -------------------------------------------------------------------
         # [구역 3] 조달권고안 (개별 품목별 데이터)
@@ -588,62 +717,173 @@ async def predict_analysis(req: PredictionRequest):
         }
         
         z_val = z_val_map.get(cond.risk_level, 1.28)
-        model_rmse = 5.0 
-        buffer_days = math.ceil(z_val * model_rmse) 
+        buffer_days_map = {
+            "Low": 0, "LOW": 0,
+            "Medium": 14, "MEDIUM": 14,
+            "High": 30, "HIGH": 30,
+        }
+        buffer_days = buffer_days_map.get(cond.risk_level, 14)
 
-        forecast_monthly_counts, forecast_peak_month, target_month_dates = forecast_scope_monthly_demand(
-            df[(df['운용부서명'] == cond.dept_name) & (df['학습데이터여부'] == 'Y')].copy()
-            if (not cond.category or cond.category == "전체")
-            else df[(df['운용부서명'] == cond.dept_name) & (df['학습데이터여부'] == 'Y') & (df['물품분류명'] == cond.category)].copy(),
-            start_date,
-            end_date,
-        )
+        asset_period_total = sum(int(asset_monthly_counts.get(period, 0)) for period in target_periods)
+        demand_period_total = sum(int(final_monthly_counts.get(period, 0)) for period in target_periods)
+        demand_scale = max(1.0, demand_period_total / asset_period_total) if asset_period_total > 0 else 1.0
 
-        if forecast_monthly_counts is not None:
-            monthly_counts_total = forecast_monthly_counts
-            peak_month = forecast_peak_month if forecast_peak_month else (max(target_months, key=lambda m: monthly_counts_total.get(m, 0)) if target_months else 0)
+        if not filtered_df.empty:
+            grouped = filtered_df.groupby('G2B목록명')
+            item_id = 1
+            
+            for item_name, group_df in grouped:
+                monthly_counts_item = group_df.groupby('고장예상월기간').size().to_dict()
+                counts_list = [
+                    math.ceil(monthly_counts_item.get(period, 0) * demand_scale)
+                    for period in target_periods
+                ]
+                
+                monthly_avg_demand = sum(counts_list) / len(target_months) if target_months else 0
+                avg_lead_days = float(group_df['리드타임_일'].mean()) if '리드타임_일' in group_df.columns else 20.0
+                lead_time_months = avg_lead_days / 30.4
+                avg_sqrt_L = float(group_df['sqrt_L'].mean()) if 'sqrt_L' in group_df.columns else math.sqrt(lead_time_months)
+                
+                sigma_d = calculate_sigma_d(counts_list)
+                safety_stock = math.ceil(z_val * sigma_d * avg_sqrt_L)
+                rop_qty = math.ceil((monthly_avg_demand * lead_time_months) + safety_stock)
+                
+                cumulative_demand = 0
+                trigger_period = target_periods[0] if len(target_periods) > 0 else pd.Timestamp.now().to_period("M")
+                rop_triggered = False
+                
+                for period, period_qty in zip(target_periods, counts_list):
+                    cumulative_demand += period_qty
+                    if cumulative_demand >= rop_qty and not rop_triggered:
+                        trigger_period = period
+                        rop_triggered = True
+                
+                if not rop_triggered:
+                    trigger_period = max(
+                        target_periods,
+                        key=lambda period: monthly_counts_item.get(period, 0)
+                    ) if len(target_periods) > 0 else pd.Timestamp.now().to_period("M")
+                    
+                rop_trigger_months.append(trigger_period.month)
+                
+                base_qty = max(1, math.ceil(len(group_df) * demand_scale))
+                total_req_qty = base_qty + safety_stock
+                
+                unit_price = int(group_df['취득금액'].mean()) if len(group_df) > 0 else 0
+                urgent_budget = total_req_qty * unit_price 
+                
+                total_base_qty_all += base_qty
+                total_safety_stock_all += safety_stock
+                
+                pred_failure_date = average_datetime(group_df['AI예측고장일'], start_date)
+                
+                # buffer_days가 클수록(High risk level) 더 일찍 발주하게 됨.
+                rec_order_date = pred_failure_date - timedelta(days=(avg_lead_days + buffer_days))
+                rec_order_date = max(rec_order_date, datetime.now())
+                
+                recommendations.append({
+                    "id": item_id,
+                    "item_name": item_name,
+                    "quantity": total_req_qty, 
+                    "unit_price": unit_price,
+                    "estimated_budget": urgent_budget,
+                    "recommend_order_date": rec_order_date.strftime("%Y-%m-%d"),
+                    "base_qty": base_qty,
+                    "safety_stock": safety_stock,
+                    "rop": rop_qty,
+                    "lead_time_days": round(avg_lead_days, 1),
+                    "monthly_avg_demand": round(monthly_avg_demand, 2),
+                })
+                item_id += 1 
+                
         else:
-            if not filtered_df.empty:
-                monthly_counts_total = filtered_df.groupby('고장예상월').size().to_dict()
+            target_item = cond.category if cond.category and cond.category != "전체" else "전체 품목"
+            demand_counts_list = [int(final_monthly_counts.get(period, 0)) for period in target_periods]
+            base_qty = sum(demand_counts_list)
+
+            if base_qty > 0:
+                avg_lead_days = float(target_df['리드타임_일'].mean()) if '리드타임_일' in target_df.columns else 20.0
+                lead_time_months = avg_lead_days / 30.4
+                avg_sqrt_L = float(target_df['sqrt_L'].mean()) if 'sqrt_L' in target_df.columns else math.sqrt(lead_time_months)
+                sigma_d = calculate_sigma_d(demand_counts_list)
+                safety_stock = math.ceil(z_val * sigma_d * avg_sqrt_L)
+                total_req_qty = base_qty + safety_stock
+                monthly_avg_demand = base_qty / len(target_periods) if len(target_periods) > 0 else 0
+                rop_qty = math.ceil((monthly_avg_demand * lead_time_months) + safety_stock)
+                peak_period = max(target_periods, key=lambda period: final_monthly_counts.get(period, 0))
+                rop_trigger_months.append(peak_period.month)
+
+                unit_price = int(target_df['취득금액'].mean()) if '취득금액' in target_df.columns else 0
+                urgent_budget = total_req_qty * unit_price
+                rec_order_date = peak_period.to_timestamp(how="start").to_pydatetime() - timedelta(days=(avg_lead_days + buffer_days))
+                rec_order_date = max(rec_order_date, datetime.now())
+
+                total_base_qty_all = base_qty
+                total_safety_stock_all = safety_stock
+                recommendations.append({
+                    "id": 1,
+                    "item_name": target_item,
+                    "quantity": total_req_qty,
+                    "unit_price": unit_price,
+                    "estimated_budget": urgent_budget,
+                    "recommend_order_date": rec_order_date.strftime("%Y-%m-%d"),
+                    "base_qty": base_qty,
+                    "safety_stock": safety_stock,
+                    "rop": rop_qty,
+                    "lead_time_days": round(avg_lead_days, 1),
+                    "monthly_avg_demand": round(monthly_avg_demand, 2),
+                })
             else:
-                monthly_counts_total = {}
-            peak_month = max(rop_trigger_months, key=rop_trigger_months.count) if rop_trigger_months else (max(target_months, key=lambda m: monthly_counts_total.get(m, 0)) if target_months else 0)
+                recommendations.append({
+                    "id": 1,
+                    "item_name": target_item,
+                    "quantity": 0,
+                    "unit_price": 0,
+                    "estimated_budget": 0,
+                    "recommend_order_date": "-",
+                    "base_qty": 0,
+                    "safety_stock": 0,
+                    "rop": 0,
+                    "lead_time_days": 0,
+                    "monthly_avg_demand": 0,
+                })
+        
+        valid_dates = [datetime.strptime(r['recommend_order_date'], "%Y-%m-%d") for r in recommendations if r['recommend_order_date'] != "-"]
+        earliest_order_date = min(valid_dates).strftime("%Y-%m-%d") if valid_dates else "-"
+        final_rop_month = min(valid_dates).month if valid_dates else 0
 
-        if target_months and peak_month in target_months:
-            peak_idx = target_months.index(peak_month)
-            final_rop_month = target_months[max(0, peak_idx - 1)]
-        else:
-            final_rop_month = target_months[0] if target_months else 0
-
+        # -------------------------------------------------------------------
+        # [구역 1] 수요 예측 시계열
+        # -------------------------------------------------------------------
         time_series = []
         for m in range(1, 13):
-            qty = int(monthly_counts_total.get(m, 0)) if m in target_months else 0
+            qty = period_month_count(final_monthly_counts, m) if m in target_months else 0
             is_rop_flag = (m == final_rop_month)
-
+            
             ts_item = {
                 "month": m,
                 "quantity": qty,
                 "is_rop": is_rop_flag
             }
             if is_rop_flag:
-                rop_date_value = earliest_order_date
-                if target_month_dates:
-                    rop_anchor = next((dt for dt in target_month_dates if dt.month == final_rop_month), None)
-                    if rop_anchor is not None:
-                        rop_date_value = rop_anchor.strftime("%Y-%m-%d")
-                ts_item["rop_date"] = rop_date_value
-                ts_item["base_qty"] = total_base_qty_all
+                ts_item["rop_date"] = earliest_order_date 
+                ts_item["base_qty"] = total_base_qty_all 
                 ts_item["safety_stock"] = total_safety_stock_all
-                ts_item["total_order_qty"] = total_base_qty_all + total_safety_stock_all
-
+                ts_item["total_order_qty"] = total_base_qty_all + total_safety_stock_all 
+                
             time_series.append(ts_item)
 
-        if not filtered_df.empty:
-            total_qty_all = sum(r['quantity'] for r in recommendations)
-            total_budget_all = sum(r['estimated_budget'] for r in recommendations)
+        # -------------------------------------------------------------------
+        # [구역 2] AI 전략적 조달 가이드 (좌측 패널 - 전체 요약)
+        # -------------------------------------------------------------------
+        total_qty_all = sum(r['quantity'] for r in recommendations)
+        total_budget_all = sum(r['estimated_budget'] for r in recommendations)
+
+        if total_qty_all > 0:
             
             target_item_name = cond.category if cond.category and cond.category != "전체" else "전체 품목"
-            peak_month = peak_month if peak_month else final_rop_month
+            peak_period = max(target_periods, key=lambda period: final_monthly_counts.get(period, 0))
+            peak_month = max(rop_trigger_months, key=rop_trigger_months.count) if rop_trigger_months else peak_period.month
             
             ai_guide_data = get_llm_ai_guide(req.prompt, target_item_name, total_qty_all, earliest_order_date, peak_month)
             
@@ -655,8 +895,8 @@ async def predict_analysis(req: PredictionRequest):
             
             ai_strategic_guide = {
                 "ai_summary_comment": ai_guide_data.get("ai_summary_comment", ""),
-                "smart_forecasting": f"분석 기간 내 발생할 것으로 예상되는 순수 고장 예상 수량({total_base_qty_all}개)에, 예상치 못한 장비 부족으로 인한 수업 결손을 방지하기 위한 안전 재고({total_safety_stock_all}개)를 더하여 최종 권장 발주 수량을 산출했습니다. (설정된 {sl_text} 서비스 수준 기준, 총 {total_qty_all}대의 필요 수량 도출)",
-                "time_to_procure": f"물품 발주부터 실제 실습실 설치까지 소요되는 리드 타임(Lead Time)을 역산하여 산출한 결과입니다. 수업 운영에 차질이 없도록 늦어도 {earliest_order_date} 이전까지 발주 절차를 진행하시는 것이 가장 적합합니다.",
+                "smart_forecasting": f"CatBoost 자산 수명 모델로 예측잔여수명을 계산해 AI예측고장일을 만들고, LightGBM 월별 수요 모델로 월별 고장예상수량을 보정했습니다. 분석 기간의 기본 고장 예상 수량({total_base_qty_all}개)에 안전재고({total_safety_stock_all}개)를 더해 {sl_text} 서비스 수준 기준 총 {total_qty_all}대의 필요 수량을 산출했습니다.",
+                "time_to_procure": f"ROP와 리드타임, 리스크 버퍼를 역산한 결과입니다. 수업 운영에 차질이 없도록 늦어도 {earliest_order_date} 이전까지 발주 절차를 진행하는 것이 적합합니다.",
                 "budget_guide": f"해당 수량 조달 및 설치를 위해 약 {budget_in_thousands:,}천 원의 예산 확보를 권고합니다."
             }
         else:
@@ -671,9 +911,12 @@ async def predict_analysis(req: PredictionRequest):
         # [구역 4] AI 분석 알고리즘 가이드
         # -------------------------------------------------------------------
         algorithm_guide = {
-            "formula_1": "적정 권장 수량 = 고장 예상 수량 + 안전 재고 (갑작스러운 고장이나 수급 불안정 시에도 수업 중단 없이 운영 가능한 최소 물량)",
-            "formula_2": "발주 시점(ROP) = (월 별 평균 수요량 X 리드 타임) + 안전 재고",
-            "formula_3": "잔여 수명(RUL): 장비의 상태 기록과 부품별 내구연한을 딥러닝 모델로 분석하여 예측한 남은 가동 가능 시간"
+            "formula_1": "예측잔여수명 = CatBoost 예측총수명(개월) - 현재 운용개월",
+            "formula_2": "AI예측고장일 = 현재일 + 예측잔여수명 X 30.4일",
+            "formula_3": "월별 고장예상수량 = max(자산별 AI예측고장월 집계, LightGBM 월별 수요 예측)",
+            "formula_4": "안전재고 = Z값(리스크 수준) X 월별 수요 표준편차 X sqrt(리드타임)",
+            "formula_5": "ROP = 월평균 수요 X 리드타임 + 안전재고",
+            "formula_6": "권장발주기한 = AI예측고장일 - 리드타임 - 리스크 버퍼"
         }
 
         forecastId = f"pred-{str(uuid.uuid4())[:8]}"
@@ -757,3 +1000,5 @@ async def rename_forecast_history(forecastId: str, req: ForecastRenameRequest):
         "message": "예측 기록 이름이 변경되었습니다.", 
         "data": {"forecastId": forecastId, "new_title": req.new_title}
     }
+
+
