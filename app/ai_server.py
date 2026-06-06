@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import joblib
 import pandas as pd
@@ -25,13 +25,13 @@ def load_local_env(path: Path = ENV_PATH):
     if not path.exists():
         return
 
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
 
         key, value = line.split("=", 1)
-        key = key.strip()
+        key = key.strip().lstrip("\ufeff")
         value = value.strip().strip('"').strip("'")
         if key and key not in os.environ:
             os.environ[key] = value
@@ -49,7 +49,33 @@ if not OPENAI_API_KEY:
 # [1.5] 임시 데이터베이스 (인메모리 DB)
 # ==========================================
 sessions_db = {}
-predictions_db = {}
+FORECAST_HISTORY_PATH = BASE_DIR / "forecast_history.json"
+
+
+def load_predictions_db():
+    if not FORECAST_HISTORY_PATH.exists():
+        return {}
+
+    try:
+        with FORECAST_HISTORY_PATH.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"⚠️ 예측 기록 로딩 실패: {e}")
+        return {}
+
+
+def save_predictions_db():
+    try:
+        tmp_path = FORECAST_HISTORY_PATH.with_suffix(".tmp")
+        with tmp_path.open("w", encoding="utf-8") as f:
+            json.dump(predictions_db, f, ensure_ascii=False, indent=2)
+        tmp_path.replace(FORECAST_HISTORY_PATH)
+    except Exception as e:
+        print(f"⚠️ 예측 기록 저장 실패: {e}")
+
+
+predictions_db = load_predictions_db()
 
 # ==========================================
 # [2] 서버 초기화 및 데이터 모델 정의
@@ -168,10 +194,16 @@ class ForecastRenameRequest(BaseModel):
 class PredictionConditions(BaseModel):
     year: Optional[int] = None
     semester: Optional[str] = None 
-    campus: str = "한양대학교 ERICA캠퍼스" 
+    campus: Optional[str] = None
     dept_name: Optional[str] = None
     category: Optional[str] = None
-    risk_level: Optional[str] = None 
+    risk_level: Optional[str] = None
+    procurement_strategy: Optional[str] = None
+    procurementStrategy: Optional[str] = None
+    procurement_tendency: Optional[str] = None
+    procurementTendency: Optional[str] = None
+    order_strategy: Optional[str] = None
+    orderStrategy: Optional[str] = None
 
 class PredictionRequest(BaseModel):
     prompt: str
@@ -233,6 +265,49 @@ def get_semester_period(year: int, semester: str):
         return datetime(year, 12, 21), datetime(year + 1, 2, 28)
     return datetime(year, 1, 1), datetime(year, 12, 31)
 
+
+def normalize_campus_value(value: Optional[str]):
+    if value is None:
+        return None
+
+    campus = str(value).strip()
+    if not campus or campus in ["전체", "all", "ALL"]:
+        return None
+
+    campus_lower = campus.lower()
+    if "erica" in campus_lower or "에리카" in campus:
+        return "ERICA"
+    if "서울" in campus:
+        return "서울"
+    return campus
+
+
+def filter_by_campus(dataframe: pd.DataFrame, campus: Optional[str]):
+    campus_key = normalize_campus_value(campus)
+    if not campus_key or "캠퍼스" not in dataframe.columns:
+        return dataframe.copy()
+
+    campus_series = dataframe["캠퍼스"].astype(str).str.strip()
+    if campus_key == "ERICA":
+        return dataframe[campus_series.str.upper().str.contains("ERICA", na=False)].copy()
+    return dataframe[campus_series == campus_key].copy()
+
+
+
+def get_procurement_preference(cond: PredictionConditions):
+    for attr in (
+        "procurement_strategy",
+        "procurementStrategy",
+        "procurement_tendency",
+        "procurementTendency",
+        "order_strategy",
+        "orderStrategy",
+        "risk_level",
+    ):
+        value = getattr(cond, attr, None)
+        if value and str(value).strip():
+            return str(value).strip()
+    return None
 
 def filter_current_assets(dataframe: pd.DataFrame):
     if "데이터세트구분" in dataframe.columns:
@@ -359,6 +434,82 @@ def average_datetime(series: pd.Series, fallback: datetime):
         return fallback
     return parsed.mean().to_pydatetime()
 
+
+def build_procurement_ai_comment(
+    item_name: str,
+    quantity: int,
+    base_qty: int,
+    safety_stock: int,
+    estimated_budget: int,
+    recommend_order_date: str,
+    lead_time_days: float,
+    risk_level: Optional[str],
+):
+    if quantity <= 0:
+        return f"{item_name}은 선택한 분석 기간 내 추가 조달 수요가 없어 즉시 발주가 필요하지 않습니다."
+
+    risk_text_map = {
+        "Low": "재고 최소화",
+        "LOW": "재고 최소화",
+        "Medium": "표준 리스크",
+        "MEDIUM": "표준 리스크",
+        "High": "결품 방지 우선",
+        "HIGH": "결품 방지 우선",
+        "리스크 선호": "재고 최소화",
+        "리스크 중립": "표준 리스크",
+        "리스크 회피": "결품 방지 우선",
+        "최소": "재고 최소화",
+        "안전재고 최소": "재고 최소화",
+        "조달 최소": "재고 최소화",
+        "표준": "표준 운영",
+        "안전재고 표준": "표준 운영",
+        "조달 표준": "표준 운영",
+        "최대": "결품 방지 우선",
+        "안전재고 최대": "결품 방지 우선",
+        "안전재고 강화": "결품 방지 우선",
+        "조달 최대": "결품 방지 우선",
+        "안정성 강화": "결품 방지 우선",
+    }
+    risk_text = risk_text_map.get(risk_level, "표준 리스크")
+    budget_text = f"약 {estimated_budget // 1000:,}천 원" if estimated_budget > 0 else "추정 예산 0원"
+    return (
+        f"{item_name}은 기본 예상 수요 {base_qty}대와 안전재고 {safety_stock}대를 반영해 "
+        f"총 {quantity}대 조달을 권고합니다. {risk_text} 기준과 리드타임 {lead_time_days:g}일을 고려해 "
+        f"{recommend_order_date}까지 발주 준비가 필요하며, 예상 예산은 {budget_text}입니다."
+    )
+
+
+def build_procurement_ai_insight(item_name: str, comment: str, quantity: int, recommend_order_date: str):
+    return {
+        "report_title": f"[{item_name}] 조달 권고",
+        "analysis_summary": comment,
+        "action_item": "권장발주기한에 맞춰 예산 확보와 구매 절차를 진행해 주세요." if quantity > 0 else "현재는 추가 발주 없이 상태를 모니터링해도 됩니다.",
+        "alert_level": "Normal" if quantity <= 0 else "Attention",
+        "recommend_order_date": recommend_order_date,
+    }
+
+
+def enrich_forecast_result_metadata(result: dict, info: Optional[dict] = None):
+    if not isinstance(result, dict):
+        return result
+
+    conditions = result.get("conditions") or {}
+    if info:
+        result.setdefault("prompt", info.get("prompt", ""))
+        result.setdefault("created_at", info.get("created_at", ""))
+
+    result.setdefault("target", conditions.get("dept_name", ""))
+    procurement_strategy = conditions.get("procurement_strategy") or conditions.get("risk_level", "")
+    result.setdefault("risk", procurement_strategy)
+    result.setdefault("procurement_strategy", procurement_strategy)
+    result.setdefault("campus", conditions.get("campus", ""))
+
+    if not result.get("period"):
+        year = conditions.get("year", "")
+        semester = conditions.get("semester", "")
+        result["period"] = f"{year} - {semester}" if year or semester else ""
+
+    return result
 
 def is_navigation_request(query: str) -> bool:
     q = query.replace(" ", "")
@@ -644,25 +795,57 @@ async def predict_analysis(req: PredictionRequest):
         
     # 수정 포인트: 분석 조건 필수 입력 방어 코드 추가
     cond = req.conditions
-    if not cond.year or not cond.semester or not cond.dept_name:
-        raise HTTPException(status_code=400, detail="분석조건(운용부서, 년도, 학기)을 필수로 입력해주세요.")
+    if not cond.year or not cond.semester or not cond.dept_name or not (cond.campus and str(cond.campus).strip()):
+        raise HTTPException(status_code=400, detail="campus, dept_name, year, semester are required.")
+    procurement_strategy = get_procurement_preference(cond)
 
     try:
         # 1. 대상 데이터 필터링: 이력 데이터는 월별 수요 모델용, 현재 자산은 수명 모델용으로 분리
-        source_df = df[df['운용부서명'] == cond.dept_name].copy()
+        source_df = filter_by_campus(df, cond.campus)
+        source_df = source_df[source_df['운용부서명'] == cond.dept_name].copy()
         if cond.category and cond.category != "전체":
             source_df = source_df[source_df['물품분류명'] == cond.category]
 
         if source_df.empty:
-            return {
-                "status": "success", 
-                "data": { 
-                    "section_1_time_series": [], 
-                    "section_2_strategic_guide": {}, 
-                    "section_3_recommendations": [],
-                    "section_4_algorithm_guide": {}
+            forecastId = f"pred-{str(uuid.uuid4())[:8]}"
+            created_at = datetime.now().isoformat()
+            empty_result = {
+                "forecastId": forecastId,
+                "created_at": created_at,
+                "prompt": req.prompt,
+                "target": cond.dept_name,
+                "campus": cond.campus,
+                "risk": procurement_strategy,
+                "period": f"{cond.year} - {cond.semester}",
+                "conditions": {
+                    "year": cond.year,
+                    "semester": cond.semester,
+                    "campus": cond.campus,
+                    "dept_name": cond.dept_name,
+                    "category": cond.category,
+                    "risk_level": procurement_strategy,
+                    "procurement_strategy": procurement_strategy
+                },
+                "section_1_time_series": [],
+                "section_2_strategic_guide": {},
+                "section_3_recommendations": [],
+                "section_4_algorithm_guide": {
+                    "formula_1": "예측잔여수명 = CatBoost 예측총수명(개월) - 현재 운용개월",
+                    "formula_2": "AI예측고장일 = 현재일 + 예측잔여수명 X 30.4일",
+                    "formula_3": "월별 고장예상수량 = max(자산별 AI예측고장월 집계, LightGBM 월별 수요 예측)",
+                    "formula_4": "안전재고 = Z값(조달 성향) X 월별 수요 표준편차 X sqrt(리드타임)",
+                    "formula_5": "ROP = 월평균 수요 X 리드타임 + 안전재고",
+                    "formula_6": "권장발주기한 = AI예측고장일 - 리드타임 - 조달 성향 버퍼"
                 }
             }
+            predictions_db[forecastId] = {
+                "title": req.prompt[:15] + "..." if len(req.prompt) > 15 else req.prompt,
+                "prompt": req.prompt,
+                "created_at": created_at,
+                "data": empty_result
+            }
+            save_predictions_db()
+            return empty_result
 
         # 2. 현재 보유/예측 대상 자산에 대해 CatBoost 자산 수명 모델 적용
         target_df = filter_current_assets(source_df)
@@ -711,18 +894,18 @@ async def predict_analysis(req: PredictionRequest):
         
         # 수정 포인트: High 선택 시 버퍼를 크게 잡아 안전하고 "일찍" 발주하도록 매핑값 반전 변경
         z_val_map = {
-            "Low": 0.0, "LOW": 0.0,         # 리스크 수용(재고 안 둠) -> 늦은 발주
-            "Medium": 1.28, "MEDIUM": 1.28, # 표준 타협
-            "High": 1.65, "HIGH": 1.65      # 결품 리스크 회피 최우선 -> 안전 재고 증가 -> 앞당겨진 이른 발주
+            "Low": 0.0, "LOW": 0.0, "리스크 선호": 0.0, "최소": 0.0, "안전재고 최소": 0.0, "조달 최소": 0.0,
+            "Medium": 1.28, "MEDIUM": 1.28, "리스크 중립": 1.28, "표준": 1.28, "안전재고 표준": 1.28, "조달 표준": 1.28,
+            "High": 1.65, "HIGH": 1.65, "리스크 회피": 1.65, "최대": 1.65, "안전재고 최대": 1.65, "안전재고 강화": 1.65, "조달 최대": 1.65, "안정성 강화": 1.65,
         }
         
-        z_val = z_val_map.get(cond.risk_level, 1.28)
+        z_val = z_val_map.get(procurement_strategy, 1.28)
         buffer_days_map = {
-            "Low": 0, "LOW": 0,
-            "Medium": 14, "MEDIUM": 14,
-            "High": 30, "HIGH": 30,
+            "Low": 0, "LOW": 0, "리스크 선호": 0, "최소": 0, "안전재고 최소": 0, "조달 최소": 0,
+            "Medium": 14, "MEDIUM": 14, "리스크 중립": 14, "표준": 14, "안전재고 표준": 14, "조달 표준": 14,
+            "High": 30, "HIGH": 30, "리스크 회피": 30, "최대": 30, "안전재고 최대": 30, "안전재고 강화": 30, "조달 최대": 30, "안정성 강화": 30,
         }
-        buffer_days = buffer_days_map.get(cond.risk_level, 14)
+        buffer_days = buffer_days_map.get(procurement_strategy, 14)
 
         asset_period_total = sum(int(asset_monthly_counts.get(period, 0)) for period in target_periods)
         demand_period_total = sum(int(final_monthly_counts.get(period, 0)) for period in target_periods)
@@ -779,7 +962,16 @@ async def predict_analysis(req: PredictionRequest):
                 
                 # buffer_days가 클수록(High risk level) 더 일찍 발주하게 됨.
                 rec_order_date = pred_failure_date - timedelta(days=(avg_lead_days + buffer_days))
-                rec_order_date = max(rec_order_date, datetime.now())
+                ai_comment = build_procurement_ai_comment(
+                    item_name=item_name,
+                    quantity=total_req_qty,
+                    base_qty=base_qty,
+                    safety_stock=safety_stock,
+                    estimated_budget=urgent_budget,
+                    recommend_order_date=rec_order_date.strftime("%Y-%m-%d"),
+                    lead_time_days=round(avg_lead_days, 1),
+                    risk_level=procurement_strategy,
+                )
                 
                 recommendations.append({
                     "id": item_id,
@@ -793,6 +985,12 @@ async def predict_analysis(req: PredictionRequest):
                     "rop": rop_qty,
                     "lead_time_days": round(avg_lead_days, 1),
                     "monthly_avg_demand": round(monthly_avg_demand, 2),
+
+                    "ai_analysis_comment": ai_comment,
+                    "ai_comment": ai_comment,
+                    "analysis_comment": ai_comment,
+                    "AI분석코멘트": ai_comment,
+                    "ai_insight": build_procurement_ai_insight(item_name, ai_comment, total_req_qty, rec_order_date.strftime("%Y-%m-%d")),
                 })
                 item_id += 1 
                 
@@ -816,7 +1014,16 @@ async def predict_analysis(req: PredictionRequest):
                 unit_price = int(target_df['취득금액'].mean()) if '취득금액' in target_df.columns else 0
                 urgent_budget = total_req_qty * unit_price
                 rec_order_date = peak_period.to_timestamp(how="start").to_pydatetime() - timedelta(days=(avg_lead_days + buffer_days))
-                rec_order_date = max(rec_order_date, datetime.now())
+                ai_comment = build_procurement_ai_comment(
+                    item_name=target_item,
+                    quantity=total_req_qty,
+                    base_qty=base_qty,
+                    safety_stock=safety_stock,
+                    estimated_budget=urgent_budget,
+                    recommend_order_date=rec_order_date.strftime("%Y-%m-%d"),
+                    lead_time_days=round(avg_lead_days, 1),
+                    risk_level=procurement_strategy,
+                )
 
                 total_base_qty_all = base_qty
                 total_safety_stock_all = safety_stock
@@ -832,8 +1039,24 @@ async def predict_analysis(req: PredictionRequest):
                     "rop": rop_qty,
                     "lead_time_days": round(avg_lead_days, 1),
                     "monthly_avg_demand": round(monthly_avg_demand, 2),
+
+                    "ai_analysis_comment": ai_comment,
+                    "ai_comment": ai_comment,
+                    "analysis_comment": ai_comment,
+                    "AI분석코멘트": ai_comment,
+                    "ai_insight": build_procurement_ai_insight(target_item, ai_comment, total_req_qty, rec_order_date.strftime("%Y-%m-%d")),
                 })
             else:
+                ai_comment = build_procurement_ai_comment(
+                    item_name=target_item,
+                    quantity=0,
+                    base_qty=0,
+                    safety_stock=0,
+                    estimated_budget=0,
+                    recommend_order_date="-",
+                    lead_time_days=0,
+                    risk_level=procurement_strategy,
+                )
                 recommendations.append({
                     "id": 1,
                     "item_name": target_item,
@@ -846,11 +1069,19 @@ async def predict_analysis(req: PredictionRequest):
                     "rop": 0,
                     "lead_time_days": 0,
                     "monthly_avg_demand": 0,
+
+                    "ai_analysis_comment": ai_comment,
+                    "ai_comment": ai_comment,
+                    "analysis_comment": ai_comment,
+                    "AI분석코멘트": ai_comment,
+                    "ai_insight": build_procurement_ai_insight(target_item, ai_comment, 0, "-"),
                 })
         
         valid_dates = [datetime.strptime(r['recommend_order_date'], "%Y-%m-%d") for r in recommendations if r['recommend_order_date'] != "-"]
-        earliest_order_date = min(valid_dates).strftime("%Y-%m-%d") if valid_dates else "-"
-        final_rop_month = min(valid_dates).month if valid_dates else 0
+        earliest_order_datetime = min(valid_dates) if valid_dates else None
+        earliest_order_date = earliest_order_datetime.strftime("%Y-%m-%d") if earliest_order_datetime else "-"
+        final_rop_month = earliest_order_datetime.month if earliest_order_datetime else 0
+        final_rop_day = earliest_order_datetime.day if earliest_order_datetime else 0
 
         # -------------------------------------------------------------------
         # [구역 1] 수요 예측 시계열
@@ -863,13 +1094,18 @@ async def predict_analysis(req: PredictionRequest):
             ts_item = {
                 "month": m,
                 "quantity": qty,
-                "is_rop": is_rop_flag
+                "is_rop": is_rop_flag,
+                "order_quantity": 0
             }
             if is_rop_flag:
                 ts_item["rop_date"] = earliest_order_date 
                 ts_item["base_qty"] = total_base_qty_all 
                 ts_item["safety_stock"] = total_safety_stock_all
                 ts_item["total_order_qty"] = total_base_qty_all + total_safety_stock_all 
+                ts_item["order_quantity"] = total_base_qty_all + total_safety_stock_all
+                ts_item["rop_day"] = final_rop_day
+                ts_item["rop_plot_month"] = final_rop_month
+                ts_item["rop_plot_x"] = final_rop_month
                 
             time_series.append(ts_item)
 
@@ -887,16 +1123,20 @@ async def predict_analysis(req: PredictionRequest):
             
             ai_guide_data = get_llm_ai_guide(req.prompt, target_item_name, total_qty_all, earliest_order_date, peak_month)
             
-            # Risk Level 표기 맵핑 조정 반영
-            service_level_map = {"Low": "50% 수준", "Medium": "90% 수준", "High": "95% 이상 안정"}
-            sl_text = service_level_map.get(cond.risk_level, "90% 수준")
+            # Procurement strategy service-level label mapping
+            service_level_map = {
+                "Low": "50% 수준", "LOW": "50% 수준", "리스크 선호": "50% 수준", "최소": "50% 수준", "안전재고 최소": "50% 수준", "조달 최소": "50% 수준",
+                "Medium": "90% 수준", "MEDIUM": "90% 수준", "리스크 중립": "90% 수준", "표준": "90% 수준", "안전재고 표준": "90% 수준", "조달 표준": "90% 수준",
+                "High": "95% 이상 안정", "HIGH": "95% 이상 안정", "리스크 회피": "95% 이상 안정", "최대": "95% 이상 안정", "안전재고 최대": "95% 이상 안정", "안전재고 강화": "95% 이상 안정", "조달 최대": "95% 이상 안정", "안정성 강화": "95% 이상 안정",
+            }
+            sl_text = service_level_map.get(procurement_strategy, "90% 수준")
 
             budget_in_thousands = total_budget_all // 1000
             
             ai_strategic_guide = {
                 "ai_summary_comment": ai_guide_data.get("ai_summary_comment", ""),
                 "smart_forecasting": f"CatBoost 자산 수명 모델로 예측잔여수명을 계산해 AI예측고장일을 만들고, LightGBM 월별 수요 모델로 월별 고장예상수량을 보정했습니다. 분석 기간의 기본 고장 예상 수량({total_base_qty_all}개)에 안전재고({total_safety_stock_all}개)를 더해 {sl_text} 서비스 수준 기준 총 {total_qty_all}대의 필요 수량을 산출했습니다.",
-                "time_to_procure": f"ROP와 리드타임, 리스크 버퍼를 역산한 결과입니다. 수업 운영에 차질이 없도록 늦어도 {earliest_order_date} 이전까지 발주 절차를 진행하는 것이 적합합니다.",
+                "time_to_procure": f"ROP와 리드타임, 조달 성향 버퍼를 역산한 결과입니다. 수업 운영에 차질이 없도록 늦어도 {earliest_order_date} 이전까지 발주 절차를 진행하는 것이 적합합니다.",
                 "budget_guide": f"해당 수량 조달 및 설치를 위해 약 {budget_in_thousands:,}천 원의 예산 확보를 권고합니다."
             }
         else:
@@ -914,9 +1154,9 @@ async def predict_analysis(req: PredictionRequest):
             "formula_1": "예측잔여수명 = CatBoost 예측총수명(개월) - 현재 운용개월",
             "formula_2": "AI예측고장일 = 현재일 + 예측잔여수명 X 30.4일",
             "formula_3": "월별 고장예상수량 = max(자산별 AI예측고장월 집계, LightGBM 월별 수요 예측)",
-            "formula_4": "안전재고 = Z값(리스크 수준) X 월별 수요 표준편차 X sqrt(리드타임)",
+            "formula_4": "안전재고 = Z값(조달 성향) X 월별 수요 표준편차 X sqrt(리드타임)",
             "formula_5": "ROP = 월평균 수요 X 리드타임 + 안전재고",
-            "formula_6": "권장발주기한 = AI예측고장일 - 리드타임 - 리스크 버퍼"
+            "formula_6": "권장발주기한 = AI예측고장일 - 리드타임 - 조달 성향 버퍼"
         }
 
         forecastId = f"pred-{str(uuid.uuid4())[:8]}"
@@ -931,14 +1171,17 @@ async def predict_analysis(req: PredictionRequest):
             "created_at": created_at,
             "prompt": req.prompt,                                # <-- 프론트엔드 '이전 예측' 영역에 표시될 질문 내용
             "target": cond.dept_name,                            # <-- Target 표시용
-            "risk": cond.risk_level,                             # <-- Risk 표시용
+            "campus": cond.campus,                              # <-- Campus 표시용
+            "risk": procurement_strategy,                             # <-- Risk 표시용
             "period": f"{cond.year} - {cond.semester}",          # <-- Period 표시용 (예: "2030 - 2학기")
             "conditions": {                                      # <-- 원본 조건도 백업용으로 전달 (필요시 프론트 사용)
                 "year": cond.year,
                 "semester": cond.semester,
+                "campus": cond.campus,
                 "dept_name": cond.dept_name,
                 "category": cond.category,
-                "risk_level": cond.risk_level
+                "risk_level": procurement_strategy,
+                "procurement_strategy": procurement_strategy
             },
             "section_1_time_series": time_series,
             "section_2_strategic_guide": ai_strategic_guide,
@@ -952,6 +1195,7 @@ async def predict_analysis(req: PredictionRequest):
             "created_at": created_at,
             "data": final_result
         }
+        save_predictions_db()
 
         return final_result
 
@@ -968,11 +1212,17 @@ async def predict_analysis(req: PredictionRequest):
 async def get_forecast_history():
     history_list = []
     for hid, info in reversed(predictions_db.items()):
+        result = enrich_forecast_result_metadata(info.get("data", {}), info)
         history_list.append({
             "forecastId": hid,
-            "title": info.get("title", info["prompt"]), 
-            "prompt": info["prompt"],
-            "created_at": info["created_at"]
+            "title": info.get("title", info.get("prompt", "")),
+            "prompt": info.get("prompt", result.get("prompt", "")),
+            "created_at": info.get("created_at", result.get("created_at", "")),
+            "target": result.get("target", ""),
+            "risk": result.get("risk", ""),
+            "period": result.get("period", ""),
+            "campus": result.get("campus", ""),
+            "conditions": result.get("conditions", {}),
         })
     return {"status": "success", "data": history_list}
 
@@ -980,12 +1230,13 @@ async def get_forecast_history():
 async def get_forecast_contents(forecastId: str):
     if forecastId not in predictions_db:
         raise HTTPException(status_code=404, detail="기록을 찾을 수 없습니다.")
-    return predictions_db[forecastId]["data"]
+    return enrich_forecast_result_metadata(predictions_db[forecastId]["data"], predictions_db[forecastId])
 
 @app.delete("/api/ai/forecast")
 async def delete_forecast_history(forecastId: str):
     if forecastId in predictions_db:
         del predictions_db[forecastId]
+        save_predictions_db()
         return {"status": "success", "message": "기록이 삭제되었습니다."}
     raise HTTPException(status_code=404, detail="기록을 찾을 수 없습니다.")
 
@@ -995,6 +1246,7 @@ async def rename_forecast_history(forecastId: str, req: ForecastRenameRequest):
         raise HTTPException(status_code=404, detail="기록을 찾을 수 없습니다.")
     
     predictions_db[forecastId]["title"] = req.new_title
+    save_predictions_db()
     return {
         "status": "success", 
         "message": "예측 기록 이름이 변경되었습니다.", 
