@@ -807,15 +807,45 @@ async def predict_analysis(req: PredictionRequest):
             source_df = source_df[source_df['물품분류명'] == cond.category]
 
         if source_df.empty:
-            return {
-                "status": "success", 
-                "data": { 
-                    "section_1_time_series": [], 
-                    "section_2_strategic_guide": {}, 
-                    "section_3_recommendations": [],
-                    "section_4_algorithm_guide": {}
+            forecastId = f"pred-{str(uuid.uuid4())[:8]}"
+            created_at = datetime.now().isoformat()
+            empty_result = {
+                "forecastId": forecastId,
+                "created_at": created_at,
+                "prompt": req.prompt,
+                "target": cond.dept_name,
+                "campus": cond.campus,
+                "risk": procurement_strategy,
+                "period": f"{cond.year} - {cond.semester}",
+                "conditions": {
+                    "year": cond.year,
+                    "semester": cond.semester,
+                    "campus": cond.campus,
+                    "dept_name": cond.dept_name,
+                    "category": cond.category,
+                    "risk_level": procurement_strategy,
+                    "procurement_strategy": procurement_strategy
+                },
+                "section_1_time_series": [],
+                "section_2_strategic_guide": {},
+                "section_3_recommendations": [],
+                "section_4_algorithm_guide": {
+                    "formula_1": "예측잔여수명 = CatBoost 예측총수명(개월) - 현재 운용개월",
+                    "formula_2": "AI예측고장일 = 현재일 + 예측잔여수명 X 30.4일",
+                    "formula_3": "월별 고장예상수량 = max(자산별 AI예측고장월 집계, LightGBM 월별 수요 예측)",
+                    "formula_4": "안전재고 = Z값(조달 성향) X 월별 수요 표준편차 X sqrt(리드타임)",
+                    "formula_5": "ROP = 월평균 수요 X 리드타임 + 안전재고",
+                    "formula_6": "권장발주기한 = AI예측고장일 - 리드타임 - 조달 성향 버퍼"
                 }
             }
+            predictions_db[forecastId] = {
+                "title": req.prompt[:15] + "..." if len(req.prompt) > 15 else req.prompt,
+                "prompt": req.prompt,
+                "created_at": created_at,
+                "data": empty_result
+            }
+            save_predictions_db()
+            return empty_result
 
         # 2. 현재 보유/예측 대상 자산에 대해 CatBoost 자산 수명 모델 적용
         target_df = filter_current_assets(source_df)
@@ -959,7 +989,7 @@ async def predict_analysis(req: PredictionRequest):
                     "ai_analysis_comment": ai_comment,
                     "ai_comment": ai_comment,
                     "analysis_comment": ai_comment,
-                    "AI?????": ai_comment,
+                    "AI분석코멘트": ai_comment,
                     "ai_insight": build_procurement_ai_insight(item_name, ai_comment, total_req_qty, rec_order_date.strftime("%Y-%m-%d")),
                 })
                 item_id += 1 
@@ -1013,7 +1043,7 @@ async def predict_analysis(req: PredictionRequest):
                     "ai_analysis_comment": ai_comment,
                     "ai_comment": ai_comment,
                     "analysis_comment": ai_comment,
-                    "AI?????": ai_comment,
+                    "AI분석코멘트": ai_comment,
                     "ai_insight": build_procurement_ai_insight(target_item, ai_comment, total_req_qty, rec_order_date.strftime("%Y-%m-%d")),
                 })
             else:
@@ -1043,7 +1073,7 @@ async def predict_analysis(req: PredictionRequest):
                     "ai_analysis_comment": ai_comment,
                     "ai_comment": ai_comment,
                     "analysis_comment": ai_comment,
-                    "AI?????": ai_comment,
+                    "AI분석코멘트": ai_comment,
                     "ai_insight": build_procurement_ai_insight(target_item, ai_comment, 0, "-"),
                 })
         
